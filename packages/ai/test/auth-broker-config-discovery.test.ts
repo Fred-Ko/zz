@@ -69,7 +69,7 @@ describe("resolveAuthBrokerConfig config discovery", () => {
 
 		await withEnv(brokerEnv, async () => {
 			await expect(discoverAuthStorage({ agentDir })).rejects.toThrow(
-				"Unable to read OMP_AUTH_BROKER_ACCOUNT_POOL_FILE",
+				"Unable to read ZZ_AUTH_BROKER_ACCOUNT_POOL_FILE",
 			);
 
 			const invalidFiles = [

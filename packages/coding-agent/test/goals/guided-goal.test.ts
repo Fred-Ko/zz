@@ -146,6 +146,9 @@ describe("guided goal setup", () => {
 
 		expect(result).toEqual({ kind: "question", question: "What is done?" });
 		expect(complete.mock.calls[0]?.[0]).toBe(planModel);
+		expect(complete.mock.calls[0]?.[1]?.systemPrompt?.join("\n\n")).toContain(
+			"The default user-facing language is Korean.",
+		);
 	});
 
 	it("routes the guided-goal request through the session provider transport", async () => {

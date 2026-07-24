@@ -130,7 +130,7 @@ async function writeIsolationPatch(
 /**
  * Run a subagent inside an isolation worktree and capture its changes.
  *
- * Branch mode: on success, commits the diff onto `omp/task/${agentId}` and
+ * Branch mode: on success, commits the diff onto `zz/task/${agentId}` and
  * returns `branchName` + `nestedPatches`. On commit failure the branch is
  * deleted, the still-live isolation diff is written to `${artifactsDir}/${agentId}.patch`,
  * and `result.error` carries the merge-failure message.
@@ -173,7 +173,7 @@ export async function runIsolatedSubprocess(opts: IsolatedRunOptions): Promise<S
 				};
 			} catch (mergeErr) {
 				// Agent succeeded but branch commit failed — clean up stale branch
-				const branchName = `omp/task/${opts.agentId}`;
+				const branchName = `zz/task/${opts.agentId}`;
 				await git.branch.tryDelete(opts.context.repoRoot, branchName);
 				const msg = mergeErr instanceof Error ? mergeErr.message : String(mergeErr);
 				try {

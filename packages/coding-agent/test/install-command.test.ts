@@ -27,7 +27,10 @@ describe("install command is registered as a top-level subcommand", () => {
 
 	test("CLI runner rejects only bare reserved management words", () => {
 		expect(resolveCliArgv(["extensions"])).toEqual({
-			error: '`omp extensions` is not a management command. Use `omp plugin list` / `omp plugin install`, or run `omp launch extensions` if you meant to send "extensions" as a prompt.',
+			error: '`zz extensions` is not a management command. Use `zz plugin list` / `zz plugin install`, or run `zz launch extensions` if you meant to send "extensions" as a prompt.',
+		});
+		expect(resolveCliArgv(["grievances"])).toEqual({
+			error: "`zz grievances` 명령은 자동 QA 기능과 함께 제거되었습니다.",
 		});
 		expect(resolveCliArgv(["extensions", "are", "not", "loading"])).toEqual({
 			argv: ["launch", "extensions", "are", "not", "loading"],

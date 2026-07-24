@@ -558,7 +558,7 @@ export async function searchGemini(params: GeminiSearchParams): Promise<SearchRe
 		});
 		if (!apiKey) {
 			throw new Error(
-				"No Gemini credentials found. Set GEMINI_API_KEY, configure an API key for provider \"google\", or login with 'omp /login google-gemini-cli' / 'omp /login google-antigravity' to enable Gemini web search.",
+				"No Gemini credentials found. Set GEMINI_API_KEY, configure an API key for provider \"google\", or login with 'zz /login google-gemini-cli' / 'zz /login google-antigravity' to enable Gemini web search.",
 			);
 		}
 		result = await callGeminiDeveloperSearch(

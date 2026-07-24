@@ -734,7 +734,7 @@ async function replayFilteredAgentCommits(opts: FilteredAgentReplayOptions): Pro
 
 /**
  * Capture task-only changes from the isolation worktree onto a parent-repo
- * branch named `omp/task/${taskId}`. Only root-repo changes go on the branch;
+ * branch named `zz/task/${taskId}`. Only root-repo changes go on the branch;
  * nested-repo patches are returned separately because the parent git can't
  * track files inside gitlinks.
  *
@@ -768,7 +768,7 @@ export async function commitToBranch(
 	if (!rootPatch.trim()) return { nestedPatches };
 
 	const repoRoot = baseline.root.repoRoot;
-	const branchName = `omp/task/${taskId}`;
+	const branchName = `zz/task/${taskId}`;
 	const fallbackMessage = description || taskId;
 
 	let branchCreated = false;
@@ -870,7 +870,7 @@ export async function mergeTaskBranches(
 
 		// Stash dirty working tree so cherry-pick can operate on a clean HEAD.
 		// Without this, cherry-pick refuses to run when uncommitted changes exist.
-		const didStash = await git.stash.push(repoRoot, "omp-task-merge");
+		const didStash = await git.stash.push(repoRoot, "zz-task-merge");
 
 		let conflictResult: MergeBranchResult | undefined;
 

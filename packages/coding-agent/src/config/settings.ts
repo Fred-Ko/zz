@@ -17,6 +17,7 @@ import * as path from "node:path";
 import { configureCredentialRedaction } from "@oh-my-pi/pi-ai/providers/transform-messages";
 import { configureProviderMaxInFlightRequests } from "@oh-my-pi/pi-ai/stream";
 import {
+	CONFIG_DIR_NAME,
 	getAgentDbPath,
 	getAgentDir,
 	getLastChangelogVersionPath,
@@ -178,10 +179,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Migrate a v17 leaf rename that used to nest under a boolean parent path
- * (`dev.autoqa.consent` → `dev.autoqaConsent`, `todo.reminders.max` →
- * `todo.remindersMax`). Pre-rename configs left the leaf beneath the parent,
- * so the parent path resolved to an object and truthy checks like
- * `isAutoQaEnabled` treated a consent-only container as "enabled".
+ * (`todo.reminders.max` → `todo.remindersMax`). Pre-rename configs left the
+ * leaf beneath the parent, so the parent path resolved to an object.
  *
  * Handles nested (`{ parent: { leaf } }`) and quoted-dotted (`"parent.leaf"`)
  * legacy sources. An explicit new key always wins; a separately configured
@@ -250,6 +249,32 @@ function migrateNestedLeafRename(
 	delete raw[oldParentPath];
 	if (isRecord(raw[root]) && Object.keys(raw[root] as Record<string, unknown>).length === 0) {
 		delete raw[root];
+	}
+}
+
+/** Remove every persisted form of the retired automatic-QA settings. */
+function removeRetiredAutoQaSettings(raw: RawSettings): void {
+	const dev = isRecord(raw.dev) ? raw.dev : undefined;
+	if (dev) {
+		delete dev.autoqa;
+		delete dev.autoqaConsent;
+		delete dev.autoqaPush;
+		if (Object.keys(dev).length === 0) delete raw.dev;
+	}
+	const workflow = isRecord(raw.workflow) ? raw.workflow : undefined;
+	if (workflow) {
+		delete workflow.autoqa;
+		if (Object.keys(workflow).length === 0) delete raw.workflow;
+	}
+	for (const key of Object.keys(raw)) {
+		if (
+			key === "dev.autoqa" ||
+			key.startsWith("dev.autoqa.") ||
+			key.startsWith("dev.autoqaPush") ||
+			key === "workflow.autoqa"
+		) {
+			delete raw[key];
+		}
 	}
 }
 
@@ -1097,7 +1122,12 @@ export class Settings {
 					merged = this.#deepMerge(merged, item.data as RawSettings);
 				}
 			}
-			const nativeProject = await this.#loadYaml(path.join(this.#cwd, ".omp", "config.yml"));
+			const canonicalProject = await this.#loadYamlIfPresent(path.join(this.#cwd, CONFIG_DIR_NAME, "config.yml"));
+			const legacyProject =
+				CONFIG_DIR_NAME === ".omp"
+					? null
+					: await this.#loadYamlIfPresent(path.join(this.#cwd, ".omp", "config.yml"));
+			const nativeProject = canonicalProject ?? legacyProject ?? {};
 			const nativeModelRoles = getByPath(nativeProject, ["modelRoles"]);
 			if (nativeModelRoles !== undefined) {
 				merged = this.#deepMerge(merged, { modelRoles: nativeModelRoles });
@@ -1577,17 +1607,12 @@ export class Settings {
 		if (tierTouched) raw.tier = tierObj;
 		delete raw.fastModeScope;
 
-		// v17 renames that used to nest under a boolean parent path:
-		//   dev.autoqa.consent -> dev.autoqaConsent
+		// Automatic QA was removed; scrub every historical nested/flat setting
+		// so old configuration cannot silently preserve or revive it.
+		removeRetiredAutoQaSettings(raw);
+
+		// v17 rename that used to nest under a boolean parent path:
 		//   todo.reminders.max -> todo.remindersMax
-		migrateNestedLeafRename(
-			raw,
-			"dev",
-			"autoqa",
-			"consent",
-			"autoqaConsent",
-			value => value === "unset" || value === "granted" || value === "denied",
-		);
 		migrateNestedLeafRename(
 			raw,
 			"todo",
@@ -1812,7 +1837,7 @@ export class Settings {
 	async #saveProjectNow(): Promise<void> {
 		if (this.#savesCancelled || !this.#persist || this.#modifiedProjectModelRoles.size === 0) return;
 
-		const projectConfigPath = path.join(this.#cwd, ".omp", "config.yml");
+		const projectConfigPath = path.join(this.#cwd, CONFIG_DIR_NAME, "config.yml");
 		const modifiedModelRoles = [...this.#modifiedProjectModelRoles];
 		this.#modifiedProjectModelRoles.clear();
 

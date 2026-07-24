@@ -26,7 +26,6 @@ export const commands: CommandEntry[] = [
 	{ name: "gc", load: () => import("./commands/gc").then(m => m.default) },
 	{ name: "grep", load: () => import("./commands/grep").then(m => m.default) },
 	{ name: "gallery", load: () => import("./commands/gallery").then(m => m.default) },
-	{ name: "grievances", load: () => import("./commands/grievances").then(m => m.default) },
 	{ name: "install", load: () => import("./commands/install").then(m => m.default) },
 	{ name: "join", load: () => import("./commands/join").then(m => m.default) },
 	{ name: "models", load: () => import("./commands/models").then(m => m.default) },
@@ -55,23 +54,24 @@ export const commands: CommandEntry[] = [
 // a hint pointing there. See {@link reservedTopLevelWordMessage} for when a hint
 // fires vs. when the argv still falls through to `launch`.
 const RESERVED_TOP_LEVEL_WORDS: Record<string, string> = {
+	grievances: "`zz grievances` 명령은 자동 QA 기능과 함께 제거되었습니다.",
 	extensions:
-		'`omp extensions` is not a management command. Use `omp plugin list` / `omp plugin install`, or run `omp launch extensions` if you meant to send "extensions" as a prompt.',
-	list: '`omp list` is not a top-level command. Use `omp plugin list` to list installed plugins, or run `omp launch list` if you meant to send "list" as a prompt.',
+		'`zz extensions` is not a management command. Use `zz plugin list` / `zz plugin install`, or run `zz launch extensions` if you meant to send "extensions" as a prompt.',
+	list: '`zz list` is not a top-level command. Use `zz plugin list` to list installed plugins, or run `zz launch list` if you meant to send "list" as a prompt.',
 	remove:
-		'`omp remove` is not a top-level command. Use `omp plugin uninstall <name>` to remove a plugin, or run `omp launch remove` if you meant to send "remove" as a prompt.',
+		'`zz remove` is not a top-level command. Use `zz plugin uninstall <name>` to remove a plugin, or run `zz launch remove` if you meant to send "remove" as a prompt.',
 	uninstall:
-		'`omp uninstall` is not a top-level command. Use `omp plugin uninstall <name@marketplace>` to remove a plugin, or run `omp launch uninstall` if you meant to send "uninstall" as a prompt.',
+		'`zz uninstall` is not a top-level command. Use `zz plugin uninstall <name@marketplace>` to remove a plugin, or run `zz launch uninstall` if you meant to send "uninstall" as a prompt.',
 	marketplace:
-		'`omp marketplace` is not a top-level command. Use `omp plugin marketplace <add|remove|update|list>` to manage marketplaces, or run `omp launch marketplace` if you meant to send "marketplace" as a prompt.',
+		'`zz marketplace` is not a top-level command. Use `zz plugin marketplace <add|remove|update|list>` to manage marketplaces, or run `zz launch marketplace` if you meant to send "marketplace" as a prompt.',
 	discover:
-		'`omp discover` is not a top-level command. Use `omp plugin discover [marketplace]` to browse available plugins, or run `omp launch discover` if you meant to send "discover" as a prompt.',
+		'`zz discover` is not a top-level command. Use `zz plugin discover [marketplace]` to browse available plugins, or run `zz launch discover` if you meant to send "discover" as a prompt.',
 	upgrade:
-		'`omp upgrade` is not a top-level command. Use `omp plugin upgrade [name@marketplace]` to upgrade plugins, or run `omp launch upgrade` if you meant to send "upgrade" as a prompt.',
+		'`zz upgrade` is not a top-level command. Use `zz plugin upgrade [name@marketplace]` to upgrade plugins, or run `zz launch upgrade` if you meant to send "upgrade" as a prompt.',
 	enable:
-		'`omp enable` is not a top-level command. Use `omp plugin enable <name@marketplace>` to enable a plugin, or run `omp launch enable` if you meant to send "enable" as a prompt.',
+		'`zz enable` is not a top-level command. Use `zz plugin enable <name@marketplace>` to enable a plugin, or run `zz launch enable` if you meant to send "enable" as a prompt.',
 	disable:
-		'`omp disable` is not a top-level command. Use `omp plugin disable <name@marketplace>` to disable a plugin, or run `omp launch disable` if you meant to send "disable" as a prompt.',
+		'`zz disable` is not a top-level command. Use `zz plugin disable <name@marketplace>` to disable a plugin, or run `zz launch disable` if you meant to send "disable" as a prompt.',
 };
 
 // Sub-actions that make `omp marketplace <sub>` unambiguously a management

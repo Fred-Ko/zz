@@ -34,11 +34,11 @@ At module initialization, `native/index.js` computes:
   - `execDir`: directory containing `process.execPath`.
   - `versionedDir`: `<getNativesDir()>/<packageVersion>`.
   - `userDataDir` fallback:
-    - Windows: `%LOCALAPPDATA%/omp` or `%USERPROFILE%/AppData/Local/omp`.
+    - Windows: `%LOCALAPPDATA%/zz` or `%USERPROFILE%/AppData/Local/zz`.
     - Non-Windows: `~/.local/bin`.
 - **Natives cache root** (`getNativesDir()`):
-  - if `$XDG_DATA_HOME/omp` exists, `$XDG_DATA_HOME/omp/natives`;
-  - otherwise `~/.omp/natives`.
+  - if `$XDG_DATA_HOME/zz` exists, `$XDG_DATA_HOME/zz/natives`;
+  - otherwise `~/.zz/natives`.
 - **Compiled-binary mode** (`detectCompiledBinary`): true if any of:
   - embedded-addon manifest is non-null,
   - `PI_COMPILED` env var is set,

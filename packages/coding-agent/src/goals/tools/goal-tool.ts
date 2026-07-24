@@ -13,11 +13,14 @@ import { ToolError } from "../../tools/tool-errors";
 import { framedBlock, renderStatusLine, truncateToWidth } from "../../tui";
 import { completionBudgetReport, remainingTokens } from "../runtime";
 import type { Goal, GoalStatus, GoalToolDetails } from "../state";
+import { summarizeTaskLifecycle, type TaskLifecycleSummary, type TaskOperationStatus } from "../task-lifecycle";
 
 const goalSchema = type({
-	op: type("'create' | 'get' | 'complete' | 'resume' | 'drop'").describe("goal operation"),
+	op: type("'create' | 'get' | 'complete' | 'resume' | 'revise' | 'recover' | 'drop'").describe("goal operation"),
 	"objective?": type("string").describe("goal objective"),
 	"token_budget?": type("number.integer").describe("token budget"),
+	"operation_id?": type("string").describe("prepared operation id"),
+	"resolution?": type("'committed' | 'failed' | 'compensated'").describe("inspected operation outcome"),
 });
 
 export type GoalToolInput = typeof goalSchema.infer;
@@ -26,6 +29,7 @@ export interface GoalToolResponse {
 	goal: Goal | null;
 	remainingTokens: number | null;
 	completionBudgetReport: string | null;
+	lifecycle: TaskLifecycleSummary | null;
 }
 
 export function buildGoalToolResponse(
@@ -40,19 +44,45 @@ export function buildGoalToolResponse(
 			options?.includeCompletionReport && resolvedGoal?.status === "complete"
 				? completionBudgetReport(resolvedGoal)
 				: null,
+		lifecycle: null,
 	};
 }
 
-function validateCreateParams(params: GoalToolInput): { objective: string; tokenBudget?: number } {
+function validateObjectiveParams(
+	params: GoalToolInput,
+	op: "create" | "revise",
+): { objective: string; tokenBudget?: number } {
 	const objective = params.objective?.trim();
 	if (!objective) {
-		throw new ToolError("objective is required when op=create");
+		throw new ToolError(`objective is required when op=${op}`);
 	}
 	const tokenBudget = params.token_budget;
 	if (tokenBudget !== undefined && (!Number.isInteger(tokenBudget) || tokenBudget <= 0)) {
 		throw new ToolError("token_budget must be a positive integer when provided");
 	}
 	return { objective, tokenBudget };
+}
+
+function validateRecoveryParams(params: GoalToolInput): {
+	operationId: string;
+	resolution: Extract<TaskOperationStatus, "committed" | "failed" | "compensated">;
+} {
+	const operationId = params.operation_id?.trim();
+	if (!operationId) throw new ToolError("operation_id is required when op=recover");
+	if (!params.resolution) throw new ToolError("resolution is required when op=recover");
+	return { operationId, resolution: params.resolution };
+}
+
+function assertCompletionReady(lifecycle: TaskLifecycleSummary | null): void {
+	if (!lifecycle) return;
+	if (lifecycle.pendingOperationIds.length > 0) {
+		throw new ToolError(
+			`cannot complete task while operation recovery is pending: ${lifecycle.pendingOperationIds.join(", ")}`,
+		);
+	}
+	if (lifecycle.stalePlan || lifecycle.phase === "RECOVERING" || lifecycle.phase === "REPLANNING") {
+		throw new ToolError("cannot complete task until the workspace is reconciled and the stale plan is updated");
+	}
 }
 
 export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
@@ -82,8 +112,11 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 
 		let response: GoalToolResponse;
 		if (params.op === "create") {
-			const created = await runtime.createGoal(validateCreateParams(params));
+			const created = await runtime.createGoal(validateObjectiveParams(params, "create"));
 			response = buildGoalToolResponse(created.goal);
+		} else if (params.op === "revise") {
+			const revised = await runtime.reviseGoal(validateObjectiveParams(params, "revise"));
+			response = buildGoalToolResponse(revised.goal);
 		} else if (params.op === "get") {
 			const state = this.#session.getGoalModeState?.();
 			response = buildGoalToolResponse(state?.goal ?? null);
@@ -93,10 +126,38 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 		} else if (params.op === "drop") {
 			const dropped = await runtime.dropGoal();
 			response = buildGoalToolResponse(dropped ?? null);
+		} else if (params.op === "recover") {
+			const { operationId, resolution } = validateRecoveryParams(params);
+			const lifecycle = this.#session.getTaskLifecycleRuntime?.();
+			if (!lifecycle) throw new ToolError("Task lifecycle is not active.");
+			const operation = await lifecycle.resolveOperation(operationId, resolution);
+			const state = this.#session.getGoalModeState?.();
+			response = buildGoalToolResponse(state?.goal ?? null);
+			response.lifecycle = summarizeTaskLifecycle(lifecycle.state);
+			let text = `Operation ${operation.id}: ${operation.status}`;
+			if (operation.postStateHash) text += `\nWorkspace state: ${operation.postStateHash}`;
+			return {
+				content: [{ type: "text", text }],
+				details: {
+					op: params.op,
+					goal: response.goal,
+					remainingTokens: response.remainingTokens,
+					completionBudgetReport: response.completionBudgetReport,
+					lifecycle: response.lifecycle,
+					operation,
+				},
+			};
 		} else {
+			const lifecycle = this.#session.getTaskLifecycleRuntime?.();
+			if (lifecycle) {
+				await lifecycle.assertCompletionReady();
+			} else {
+				assertCompletionReady(summarizeTaskLifecycle(this.#session.getTaskLifecycleState?.()));
+			}
 			const completed = await runtime.completeGoalFromTool();
 			response = buildGoalToolResponse(completed, { includeCompletionReport: true });
 		}
+		response.lifecycle = summarizeTaskLifecycle(this.#session.getTaskLifecycleState?.());
 		let text: string;
 		if (response.goal) {
 			text = `Goal: ${response.goal.objective}\nStatus: ${response.goal.status}\nTokens: ${response.goal.tokensUsed} used`;
@@ -109,6 +170,20 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 			if (response.completionBudgetReport) {
 				text += `\n\n${response.completionBudgetReport}`;
 			}
+			if (response.lifecycle) {
+				text += `\nTask: ${response.lifecycle.taskId}`;
+				text += `\nLifecycle: ${response.lifecycle.phase} (spec v${response.lifecycle.specVersion}, plan v${response.lifecycle.planVersion})`;
+				text += `\nEpisode: ${response.lifecycle.episodeId}`;
+				text += `\nNext workflow action: ${response.lifecycle.requiredNextAction}`;
+				text += `\nWrites allowed: ${response.lifecycle.writesAllowed ? "yes" : "no"}`;
+				text += `\nVerification current: ${response.lifecycle.verificationFresh ? "yes" : "no"}`;
+				if (response.lifecycle.readinessBlockers.length > 0) {
+					text += `\nReadiness blockers: ${response.lifecycle.readinessBlockers.join(", ")}`;
+				}
+				if (response.lifecycle.pendingOperationIds.length > 0) {
+					text += `\nRecovery required: ${response.lifecycle.pendingOperationIds.join(", ")}`;
+				}
+			}
 		} else {
 			text = "No active goal.";
 		}
@@ -119,6 +194,7 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 				goal: response.goal,
 				remainingTokens: response.remainingTokens,
 				completionBudgetReport: response.completionBudgetReport,
+				lifecycle: response.lifecycle,
 			},
 		};
 	}
@@ -134,6 +210,10 @@ function describeOp(op: string | undefined): string {
 			return "check";
 		case "resume":
 			return "resume";
+		case "revise":
+			return "revise";
+		case "recover":
+			return "recover";
 		case "drop":
 			return "drop";
 		default:
@@ -159,6 +239,8 @@ interface GoalRenderArgs {
 	op?: GoalToolInput["op"];
 	objective?: string;
 	token_budget?: number;
+	operation_id?: string;
+	resolution?: "committed" | "failed" | "compensated";
 }
 
 export const goalToolRenderer = {

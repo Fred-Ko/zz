@@ -223,6 +223,18 @@ describe("Hindsight tool factories", () => {
 		expect(MemoryRecallTool.createIf(session)).toBeInstanceOf(MemoryRecallTool);
 		expect(MemoryReflectTool.createIf(session)).toBeInstanceOf(MemoryReflectTool);
 	});
+
+	it("hides model-driven memory tools when Hindsight is workflow-managed", () => {
+		const settings = Settings.isolated({
+			"memory.backend": "hindsight",
+			"hindsight.integrationMode": "workflow-managed",
+			"hindsight.exposeModelTools": false,
+		});
+		const session = makeSession(settings);
+		expect(MemoryRetainTool.createIf(session)).toBeNull();
+		expect(MemoryRecallTool.createIf(session)).toBeNull();
+		expect(MemoryReflectTool.createIf(session)).toBeNull();
+	});
 });
 
 describe("Mnemopi tool factories", () => {

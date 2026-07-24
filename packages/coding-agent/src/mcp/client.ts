@@ -43,7 +43,7 @@ const PROTOCOL_VERSION = "2025-03-26";
 
 /** Client info sent during initialization */
 const CLIENT_INFO = {
-	name: "omp-coding-agent",
+	name: "zz-coding-agent",
 	version: "1.0.0",
 };
 

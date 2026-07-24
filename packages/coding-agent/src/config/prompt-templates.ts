@@ -1,6 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import {
+	CONFIG_DIR_NAME,
 	getProjectDir,
 	getProjectPromptsDir,
 	getPromptsDir,
@@ -174,7 +175,11 @@ export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = 
 	templates.push(...(await loadTemplatesFromDir(globalPromptsDir, "user")));
 
 	// 2. Load project templates from cwd/.omp/prompts/
-	const projectPromptsDir = getProjectPromptsDir(resolvedCwd);
+	const canonicalProjectPromptsDir = getProjectPromptsDir(resolvedCwd);
+	const projectPromptsDir =
+		CONFIG_DIR_NAME !== ".omp" && !fs.existsSync(canonicalProjectPromptsDir)
+			? path.join(resolvedCwd, ".omp", "prompts")
+			: canonicalProjectPromptsDir;
 	templates.push(...(await loadTemplatesFromDir(projectPromptsDir, "project")));
 
 	return templates;

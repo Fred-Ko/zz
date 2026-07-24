@@ -1998,6 +1998,15 @@ export const cherryPick = Object.assign(
 // ════════════════════════════════════════════════════════════════════════════
 
 export const stash = {
+	/**
+	 * Create an unattached stash commit for tracked index/worktree changes
+	 * without changing the worktree or refs. Returns null when there is no
+	 * tracked change to checkpoint.
+	 */
+	async create(cwd: string, message: string): Promise<string | null> {
+		const commit = await tryText(cwd, ["stash", "create", message]);
+		return commit?.trim() || null;
+	},
 	/** Stash working tree + index changes. Returns true when git created a new stash entry. */
 	async push(cwd: string, message?: string): Promise<boolean> {
 		ensureAvailable();

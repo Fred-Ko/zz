@@ -17,7 +17,7 @@
  */
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir, isEnoent, logger, tryParseJson } from "@oh-my-pi/pi-utils";
+import { CONFIG_DIR_NAME, getAgentDir, isEnoent, logger, tryParseJson } from "@oh-my-pi/pi-utils";
 import { readDirEntries, readFile } from "../capability/fs";
 import type { LoadContext } from "../capability/types";
 import { getEnabledPlugins } from "../extensibility/plugins/loader";
@@ -77,12 +77,14 @@ export function getInjectedOmpExtensionCliRoots(): readonly OmpExtensionRoot[] {
 
 interface ScopeDirs {
 	project: string;
+	legacyProject: string | null;
 	user: string;
 }
 
 function scopeDirs(ctx: LoadContext): ScopeDirs {
 	return {
-		project: path.join(ctx.cwd, ".omp"),
+		project: path.join(ctx.cwd, CONFIG_DIR_NAME),
+		legacyProject: CONFIG_DIR_NAME === ".omp" ? null : path.join(ctx.cwd, ".omp"),
 		user: getAgentDir(),
 	};
 }
@@ -134,9 +136,10 @@ async function isDirectory(p: string): Promise<boolean> {
  * other sources still surface.
  */
 export async function listOmpExtensionRoots(ctx: LoadContext): Promise<OmpExtensionRoot[]> {
-	const { project, user } = scopeDirs(ctx);
-	const [projectExtensions, userExtensions, installedPlugins] = await Promise.all([
+	const { project, legacyProject, user } = scopeDirs(ctx);
+	const [projectExtensions, legacyProjectExtensions, userExtensions, installedPlugins] = await Promise.all([
 		readSettingsExtensions(path.join(project, "settings.json")),
+		legacyProject ? readSettingsExtensions(path.join(legacyProject, "settings.json")) : Promise.resolve([]),
 		readSettingsExtensions(path.join(user, "settings.json")),
 		listInstalledPluginRoots(ctx),
 	]);
@@ -144,6 +147,7 @@ export async function listOmpExtensionRoots(ctx: LoadContext): Promise<OmpExtens
 	const candidates: InjectedRoot[] = [
 		...injectedCliRoots,
 		...projectExtensions.map((raw): InjectedRoot => ({ path: resolveAgainst(raw, ctx), level: "project" })),
+		...legacyProjectExtensions.map((raw): InjectedRoot => ({ path: resolveAgainst(raw, ctx), level: "project" })),
 		...userExtensions.map((raw): InjectedRoot => ({ path: resolveAgainst(raw, ctx), level: "user" })),
 		...installedPlugins,
 	];

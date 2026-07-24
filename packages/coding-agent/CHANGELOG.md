@@ -32,6 +32,25 @@
 ### Removed
 
 - Removed the `model` parameter from `task` and `agent()`: explicit per-spawn model selectors and fallback chains are no longer supported; spawns always use the agent's configured model
+### Added
+
+- Added durable task lifecycle tracking for goal mode, including versioned task specifications and plan DAGs, workspace baselines, session/episode handoffs, write-ahead mutation journals, explicit recovery of ambiguous operations after interruption, completion reconciliation, and selective Hindsight retention of verified task facts.
+- Added optional shared workflow coordination for task/spec/attempt/episode state, optimistic event versions, workspace leases and heartbeats, durable local coordinator outboxes, stable machine and repository identities, and non-mutating Git checkpoint transport for cross-machine recovery.
+- Added workflow-managed Hindsight integration with repository and user banks, strict task/repository tags, provenance metadata, boundary-triggered recall, curated verified retention, secret redaction, mutable document replacement, and a durable retrying memory outbox.
+
+### Changed
+
+- Changed goal workflow readiness to require explicit verification or a persisted validation step, model todo phases as dependency barriers instead of a fully serial plan, expose authoritative write/readiness/verification state to the model, and require fresh workspace-bound validation evidence before completion.
+- Changed ZZ's built-in user-facing language default to Korean while preserving explicit user language choices and repository language conventions.
+- Renamed the user-facing application, command, binary, and default configuration root from OMP/KOMP to ZZ, `zz`, and `.zz`.
+
+### Removed
+
+- Removed automatic QA reporting, including the model prompt directive, `xd://report_issue` device, consent dialog, local grievance database integration, backend push, settings, and `zz grievances` command.
+
+### Fixed
+
+- Fixed profile alias installation and user-shell zsh execution inheriting ambient shell config roots when callers provide an isolated home directory.
 
 ## [17.1.1] - 2026-07-24
 

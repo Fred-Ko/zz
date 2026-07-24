@@ -136,6 +136,7 @@ import type { Skill, SkillWarning } from "../extensibility/skills";
 import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
 import { GoalRuntime } from "../goals/runtime";
 import type { GoalModeState } from "../goals/state";
+import { TaskLifecycleRuntime } from "../goals/task-lifecycle";
 import type { HindsightSessionState } from "../hindsight/state";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
 import type { IrcMessage } from "../irc/bus";
@@ -177,6 +178,7 @@ import {
 	toReasoningEffort,
 } from "../thinking";
 import { shutdownTinyTitleClient } from "../tiny/title-client";
+import { resolveToolTier } from "../tools/approval";
 import { type AskToolDetails, type AskToolInput, recoverAskQuestions } from "../tools/ask";
 import { releaseTabsForOwner } from "../tools/browser/tab-supervisor";
 import type { CheckpointState, CompletedRewindState } from "../tools/checkpoint";
@@ -200,6 +202,7 @@ import { normalizeModelContextImages } from "../utils/image-loading";
 import { generateSessionTitle } from "../utils/title-generator";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
+import { WorkflowIntegration } from "../workflow/integration";
 import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events";
 import type {
 	AgentSessionConfig,
@@ -480,6 +483,8 @@ export class AgentSession {
 	#vibeModeState: VibeModeState | undefined;
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
+	readonly #taskLifecycle: TaskLifecycleRuntime;
+	readonly #workflowIntegration: WorkflowIntegration;
 	readonly #advisors: SessionAdvisors;
 	#goalTurnCounter = 0;
 	#planReferenceSent = false;
@@ -635,7 +640,7 @@ export class AgentSession {
 		if (mode === "off") return;
 		try {
 			this.#powerAssertion = MacOSPowerAssertion.start({
-				reason: "Oh My Pi agent session",
+				reason: "ZZ agent session",
 				idle: true,
 				display: mode === "display" || mode === "system",
 				system: mode === "system",
@@ -1220,7 +1225,53 @@ export class AgentSession {
 			this.#streamingEditGuard.maybeAbort(event);
 			this.#loopGuards.onAssistantEvent(message, assistantMessageEvent);
 		});
-		// Tool-result hook owns synchronous post-tool actions that must affect the current loop.
+		this.#workflowIntegration = new WorkflowIntegration({
+			settings: this.settings,
+			getCwd: () => this.sessionManager.getCwd(),
+			getSessionId: () => this.sessionManager.getSessionId(),
+			redact: content => this.#obfuscator?.obfuscate(content) ?? content,
+		});
+		this.#taskLifecycle = new TaskLifecycleRuntime({
+			getSessionId: () => this.sessionManager.getSessionId(),
+			getCwd: () => this.sessionManager.getCwd(),
+			getEntries: () => this.sessionManager.getBranch(),
+			appendCustomEntry: (customType, data) => this.sessionManager.appendCustomEntry(customType, data),
+			ensureOnDisk: () => this.sessionManager.ensureOnDisk(),
+			flush: () => this.sessionManager.flush(),
+			syncSharedState: (state, reason) => this.#workflowIntegration.syncState(state, reason),
+			syncSharedOperation: (state, operation, reason) =>
+				this.#workflowIntegration.syncOperation(state, operation, reason),
+			assertMutationLease: state => this.#workflowIntegration.assertMutationLease(state),
+			recallTaskMemory: (state, stage) => this.#workflowIntegration.recall(state, stage),
+			retainTaskMemory: async (memory, state) => {
+				try {
+					if (this.settings.get("hindsight.integrationMode") === "workflow-managed") {
+						await this.#workflowIntegration.retainTaskMemory(memory, state);
+					} else {
+						this.#hindsightSessionState?.enqueueRetain(memory.content, memory.context);
+					}
+				} catch (error) {
+					logger.warn("Failed to queue completed task memory", { error: String(error) });
+				}
+			},
+		});
+		const configuredBeforeToolCall = this.agent.beforeToolCall;
+		this.agent.beforeToolCall = async (ctx, signal) => {
+			const configuredResult = await configuredBeforeToolCall?.(ctx, signal);
+			if (configuredResult?.block || ctx.toolCall.name === "goal") return configuredResult;
+			const tool =
+				ctx.context.tools?.find(candidate => candidate.name === ctx.toolCall.name) ??
+				ctx.context.tools?.find(candidate => candidate.customWireName === ctx.toolCall.name);
+			if (!tool) return configuredResult;
+			await this.#taskLifecycle.prepareOperation({
+				toolCallId: ctx.toolCall.id,
+				toolName: ctx.toolCall.name,
+				tier: resolveToolTier(tool, ctx.args),
+				args: ctx.args,
+			});
+			return configuredResult;
+		};
+		// Tool-result hook owns post-tool actions that must affect the current loop.
 		this.agent.afterToolCall = ctx => this.#afterToolCall(ctx);
 		this.agent.providerSessionState = this.#providerSessionState;
 		this.#syncAgentSessionId();
@@ -1262,6 +1313,8 @@ export class AgentSession {
 					{ deliverAs: message.deliverAs },
 				);
 			},
+			assertGoalCompletionReady: () => this.#taskLifecycle.assertCompletionReady(),
+			handleLifecycleEvent: event => this.#taskLifecycle.handleGoalEvent(event),
 		});
 		this.#cancelExitRecorder = postmortem.register(`agent-session:${this.sessionManager.getSessionId()}`, reason => {
 			this.#recordSessionExit(reason);
@@ -1413,6 +1466,8 @@ export class AgentSession {
 				this.#freshProviderSessionId = undefined;
 			},
 			syncAgentSessionId: () => this.#syncAgentSessionId(),
+			prepareTaskLifecycleHandoff: () => this.#taskLifecycle.prepareHandoff(),
+			resumeTaskLifecycleHandoff: handoff => this.#taskLifecycle.resumeHandoff(handoff),
 			rekeyMemoryForCurrentSessionId: () => {
 				this.#memory.rekeyForCurrentSessionId();
 			},
@@ -2986,7 +3041,7 @@ export class AgentSession {
 		}
 	}
 
-	#afterToolCall(ctx: AfterToolCallContext): AfterToolCallResult | undefined {
+	async #afterToolCall(ctx: AfterToolCallContext): Promise<AfterToolCallResult | undefined> {
 		if (
 			this.#isTerminalYieldToolResult({
 				toolName: ctx.toolCall.name,
@@ -2998,7 +3053,12 @@ export class AgentSession {
 			this.#synchronouslyTerminatedYieldToolCallIds.add(ctx.toolCall.id);
 			this.agent.abort(TERMINAL_TOOL_RESULT_ABORT_REASON);
 		}
-		return this.#ttsr.afterToolCall(ctx);
+		const result = this.#ttsr.afterToolCall(ctx);
+		await this.#taskLifecycle.settleOperation(ctx.toolCall.id, result?.isError ?? ctx.isError);
+		if (ctx.toolCall.name === "todo" && !(result?.isError ?? ctx.isError)) {
+			await this.#taskLifecycle.syncPlan(this.getTodoPhases());
+		}
+		return result;
 	}
 
 	/** Find the last assistant message in agent state (including aborted ones) */
@@ -3537,6 +3597,7 @@ export class AgentSession {
 			this.#disconnectOwnedMcp(),
 			advisorRecorderClosed,
 			hindsightState?.flushRetainQueue() ?? Promise.resolve(),
+			this.#workflowIntegration.close(),
 			this.#disposeMnemopi(mnemopiState, options.mnemopiConsolidateTimeoutMs),
 		]);
 		for (const result of results) {
@@ -4229,6 +4290,10 @@ export class AgentSession {
 		return this.#goalRuntime;
 	}
 
+	get taskLifecycle(): TaskLifecycleRuntime {
+		return this.#taskLifecycle;
+	}
+
 	markPlanReferenceSent(): void {
 		this.#planReferenceSent = true;
 	}
@@ -4496,10 +4561,11 @@ export class AgentSession {
 		const content = this.#goalRuntime.buildActivePrompt();
 		if (!content) return null;
 		const todoContext = this.#buildGoalTodoContext();
+		const taskLifecycleContext = this.#taskLifecycle.buildContext();
 		return {
 			role: "custom",
 			customType: "goal-mode-context",
-			content: prompt.render(goalModeContextPrompt, { goalContext: content, todoContext }),
+			content: prompt.render(goalModeContextPrompt, { goalContext: content, taskLifecycleContext, todoContext }),
 			display: false,
 			attribution: "agent",
 			timestamp: Date.now(),
@@ -5937,6 +6003,7 @@ export class AgentSession {
 				...options,
 				additionalDirectories: this.settings.get("workspace.additionalDirectories"),
 			});
+			this.#taskLifecycle.clear();
 			this.#bash.markSessionTransition(bashTransition);
 			sessionTransitioned = true;
 		} finally {
@@ -6051,6 +6118,8 @@ export class AgentSession {
 		this.#freshProviderSessionId = undefined;
 		this.#adoptInheritedProviderPromptCacheKey();
 		this.#syncAgentSessionId();
+		this.#taskLifecycle.rehydrate();
+		await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
 		this.#memory.rekeyForCurrentSessionId();
 		await this.#memory.resetContextForNewTranscript();
 
@@ -6070,6 +6139,7 @@ export class AgentSession {
 	async moveSession(newCwd: string, targetSessionDir?: string): Promise<void> {
 		this.#assertVibeSessionTransitionAllowed("move the session");
 		await this.sessionManager.moveTo(newCwd, targetSessionDir);
+		await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
 	}
 
 	// =========================================================================
@@ -6953,6 +7023,7 @@ export class AgentSession {
 
 		try {
 			await this.sessionManager.setSessionFile(sessionPath);
+			this.#taskLifecycle.rehydrate();
 			this.#bash.markSessionTransition(bashTransition);
 			if (switchingToDifferentSession) {
 				this.#freshProviderSessionId = undefined;
@@ -7091,6 +7162,7 @@ export class AgentSession {
 			return true;
 		} catch (error) {
 			this.sessionManager.restoreState(previousSessionState);
+			this.#taskLifecycle.rehydrate();
 			this.#freshProviderSessionId = previousFreshProviderSessionId;
 			this.#syncAgentSessionId(previousSessionState.sessionId);
 			this.#memory.rekeyForCurrentSessionId();
@@ -7184,6 +7256,8 @@ export class AgentSession {
 			} else {
 				this.sessionManager.createBranchedSession(selectedEntry.parentId);
 			}
+			this.#taskLifecycle.rehydrate();
+			await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
 			this.#bash.markSessionTransition(bashTransition);
 			sessionTransitioned = true;
 		} finally {

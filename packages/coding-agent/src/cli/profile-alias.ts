@@ -20,10 +20,10 @@ export interface ProfileAliasCommand {
 }
 
 const DEFAULT_ALIAS_COMMAND: ProfileAliasCommand = {
-	display: "omp",
-	posix: "omp",
-	fish: "omp",
-	powerShell: "omp",
+	display: "zz",
+	posix: "zz",
+	fish: "zz",
+	powerShell: "zz",
 };
 
 export interface ProfileAliasInstallOptions {
@@ -147,8 +147,8 @@ function validateAliasName(aliasName: string, shell: ProfileAliasShell): string 
 	if (!ALIAS_NAME_RE.test(normalized)) {
 		throw new Error(`Invalid alias "${aliasName}". Alias names must match ${ALIAS_NAME_RE.source}.`);
 	}
-	if (normalized.toLowerCase() === "omp") {
-		throw new Error('Invalid alias "omp". Refusing to shadow the base omp command.');
+	if (normalized.toLowerCase() === "zz") {
+		throw new Error('Invalid alias "zz". Refusing to shadow the base zz command.');
 	}
 	if (getReservedAliasNames(shell).has(normalized.toLowerCase())) {
 		throw new Error(`Invalid alias "${aliasName}". Refusing to create a ${shell} reserved word.`);
@@ -254,7 +254,7 @@ function resolveShellConfigPath(
 			// a hard-coded ~/.config would be silently ignored when the user relocates
 			// their XDG config root, leaving the alias unsourced after a restart.
 			const configHome = env.XDG_CONFIG_HOME ? toPosix(env.XDG_CONFIG_HOME) : posixJoinUnc(posixHome, ".config");
-			return posixJoinUnc(configHome, "fish", "conf.d", "omp-profiles.fish");
+			return posixJoinUnc(configHome, "fish", "conf.d", "zz-profiles.fish");
 		}
 		case "pwsh":
 			return platform === "win32"
@@ -272,13 +272,13 @@ function renderAliasBlock(
 	command: ProfileAliasCommand,
 ): { block: string; command: string } {
 	const profiledCommand = `${command.display} --profile=${profile}`;
-	const start = `# >>> omp profile alias: ${aliasName} >>>`;
-	const end = `# <<< omp profile alias: ${aliasName} <<<`;
+	const start = `# >>> zz profile alias: ${aliasName} >>>`;
+	const end = `# <<< zz profile alias: ${aliasName} <<<`;
 	let body: string;
 	switch (shell) {
 		case "fish":
 			body = [
-				`function ${aliasName} --wraps omp --description 'OMP profile ${profile}'`,
+				`function ${aliasName} --wraps zz --description 'ZZ profile ${profile}'`,
 				`    command ${command.fish} --profile=${profile} $argv`,
 				"end",
 			].join("\n");
@@ -295,8 +295,13 @@ function renderAliasBlock(
 }
 
 function upsertBlock(content: string, aliasName: string, block: string): string {
-	const start = `# >>> omp profile alias: ${aliasName} >>>`;
-	const end = `# <<< omp profile alias: ${aliasName} <<<`;
+	const canonicalStart = `# >>> zz profile alias: ${aliasName} >>>`;
+	const canonicalEnd = `# <<< zz profile alias: ${aliasName} <<<`;
+	const legacyStart = `# >>> omp profile alias: ${aliasName} >>>`;
+	const legacyEnd = `# <<< omp profile alias: ${aliasName} <<<`;
+	const hasCanonical = content.includes(canonicalStart);
+	const start = hasCanonical ? canonicalStart : legacyStart;
+	const end = hasCanonical ? canonicalEnd : legacyEnd;
 	const startIndex = content.indexOf(start);
 	if (startIndex !== -1) {
 		const endIndex = content.indexOf(end, startIndex + start.length);
@@ -338,7 +343,14 @@ export async function installProfileAlias(options: ProfileAliasInstallOptions): 
 	}
 	const platform = options.platform ?? process.platform;
 	const homeDir = options.homeDir ?? os.homedir();
-	const env = options.env ?? process.env;
+	const ambientEnv = options.env ?? process.env;
+	// An injected home directory is an isolation boundary (tests, installers,
+	// containers). Keep ambient shell detection, but do not let host config-root
+	// overrides redirect writes outside that home unless `env` was explicit.
+	const env =
+		options.env !== undefined || options.homeDir === undefined
+			? ambientEnv
+			: { ...ambientEnv, ZDOTDIR: undefined, XDG_CONFIG_HOME: undefined };
 	const shell = normalizeShellName(options.shellPath ?? env.SHELL, platform, env);
 	const aliasName = validateAliasName(options.aliasName, shell);
 	const configPath = resolveShellConfigPath(shell, homeDir, platform, env);

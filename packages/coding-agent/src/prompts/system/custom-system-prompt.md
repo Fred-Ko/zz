@@ -1,3 +1,5 @@
+{{defaultLanguagePolicy}}
+
 {{#if systemPromptCustomization}}
 {{systemPromptCustomization}}
 {{/if}}

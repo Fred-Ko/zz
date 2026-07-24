@@ -1,8 +1,8 @@
 /**
  * Update CLI command handler.
  *
- * Handles `omp update` to check for and install updates.
- * Uses the installer that owns the active omp executable when it can be detected.
+ * Handles `zz update` to check for and install updates.
+ * Uses the installer that owns the active zz executable when it can be detected.
  */
 import * as fs from "node:fs";
 import * as os from "node:os";
@@ -16,7 +16,7 @@ import { isTimeoutError, withTimeoutSignal } from "../utils/fetch-timeout";
 
 const REPO = "can1357/oh-my-pi";
 const PACKAGE = "@oh-my-pi/pi-coding-agent";
-const HOMEBREW_FORMULA = "can1357/tap/omp";
+const HOMEBREW_FORMULA = "can1357/tap/zz";
 const MISE_TOOL = "github:can1357/oh-my-pi";
 /**
  * Official npm registry origin.
@@ -610,7 +610,7 @@ function getBinaryName(): string {
 }
 
 /**
- * Resolve the path that `omp` maps to in the user's PATH.
+ * Resolve the path that `zz` maps to in the user's PATH.
  */
 function resolveOmpPath(): string | undefined {
 	return $which(APP_NAME) ?? undefined;
@@ -656,7 +656,7 @@ async function printVerification(expectedVersion: string): Promise<void> {
 		return;
 	}
 	console.log(chalk.yellow(`\nWarning: ${formatVerificationFailure(result, expectedVersion)}`));
-	console.log(chalk.yellow(`You may need to reinstall: curl -fsSL https://omp.sh/install | sh`));
+	console.log(chalk.yellow("You may need to rebuild and reinstall from the ZZ source checkout: bun run setup"));
 }
 
 async function unlinkIfExists(filePath: string): Promise<void> {

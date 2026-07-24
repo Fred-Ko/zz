@@ -3,6 +3,7 @@ import goalBudgetLimitPrompt from "../prompts/goals/goal-budget-limit.md" with {
 import goalContinuationPrompt from "../prompts/goals/goal-continuation.md" with { type: "text" };
 import goalModeActivePrompt from "../prompts/goals/goal-mode-active.md" with { type: "text" };
 import type { Goal, GoalBudgetSteering, GoalModeState, GoalRuntimeEvent, GoalTokenUsage } from "./state";
+import type { GoalLifecycleEvent } from "./task-lifecycle";
 
 export interface GoalRuntimeHost {
 	getState(): GoalModeState | undefined;
@@ -15,6 +16,8 @@ export interface GoalRuntimeHost {
 		content: string;
 		deliverAs?: "steer" | "followUp" | "nextTurn";
 	}): Promise<void>;
+	assertGoalCompletionReady?(): Promise<void>;
+	handleLifecycleEvent?(event: GoalLifecycleEvent): void | Promise<void>;
 	now?(): number;
 }
 
@@ -178,6 +181,10 @@ export class GoalRuntime {
 		}
 	}
 
+	async #notifyLifecycle(event: GoalLifecycleEvent): Promise<void> {
+		await this.#host.handleLifecycleEvent?.(event);
+	}
+
 	#markActiveAccounting(goal: Goal, resetWallClock = false): void {
 		if (resetWallClock || this.#wallClock.activeGoalId !== goal.id) {
 			this.#wallClock = { lastAccountedAt: this.#now(), activeGoalId: goal.id };
@@ -252,6 +259,7 @@ export class GoalRuntime {
 			this.#clearActiveAccounting();
 			this.#budgetReportedFor = undefined;
 			await this.#commitState(cloned, { persist: "goal_paused" });
+			await this.#notifyLifecycle({ type: "paused", goal: cloned.goal, reason: "interrupted" });
 		});
 	}
 
@@ -261,6 +269,7 @@ export class GoalRuntime {
 		if (options?.preserveActiveGoal && state.enabled && state.goal.status === "active") {
 			this.#markActiveAccounting(state.goal, true);
 			await this.#commitState(state, { emit: true });
+			await this.#notifyLifecycle({ type: "thread_resumed", goal: state.goal, active: true });
 			return state;
 		}
 		if (state.goal.status === "active") {
@@ -270,6 +279,7 @@ export class GoalRuntime {
 			this.#clearActiveAccounting();
 			this.#budgetReportedFor = undefined;
 			await this.#commitState(state, { persist: "goal_paused" });
+			await this.#notifyLifecycle({ type: "thread_resumed", goal: state.goal, active: false });
 			return state;
 		}
 		if (state.enabled && isAccountingStatus(state.goal)) {
@@ -278,6 +288,7 @@ export class GoalRuntime {
 			this.#clearActiveAccounting();
 		}
 		await this.#commitState(state, { emit: true });
+		await this.#notifyLifecycle({ type: "thread_resumed", goal: state.goal, active: state.enabled });
 		return state;
 	}
 
@@ -303,6 +314,7 @@ export class GoalRuntime {
 			}
 			await this.#commitState(state, { persist: state.enabled ? "goal" : "goal_paused" });
 			if (shouldSteer) {
+				await this.#notifyLifecycle({ type: "budget_limited", goal: state.goal });
 				await this.#sendBudgetLimitSteer(state.goal);
 			}
 			return state;
@@ -355,6 +367,7 @@ export class GoalRuntime {
 			this.#budgetReportedFor = undefined;
 		}
 		if (steering === "allowed" && flippedToBudgetLimited && this.#budgetReportedFor !== state.goal.id) {
+			await this.#notifyLifecycle({ type: "budget_limited", goal: state.goal });
 			await this.#sendBudgetLimitSteer(state.goal);
 		}
 	}
@@ -394,6 +407,7 @@ export class GoalRuntime {
 			this.#budgetReportedFor = undefined;
 			this.#markActiveAccounting(state.goal);
 			await this.#commitState(state, { persist: "goal" });
+			await this.#notifyLifecycle({ type: "created", goal: state.goal });
 			return state;
 		});
 	}
@@ -408,10 +422,32 @@ export class GoalRuntime {
 				throw new Error("cannot replace goal because no goal is active");
 			}
 			await this.#flushUsageLocked("suppressed");
+			const previousGoal = cloneGoal(existing.goal);
 			const state = this.#createGoalState(objective, input.tokenBudget);
 			this.#budgetReportedFor = undefined;
 			this.#markActiveAccounting(state.goal);
 			await this.#commitState(state, { persist: "goal" });
+			await this.#notifyLifecycle({ type: "replaced", previousGoal, goal: state.goal });
+			return state;
+		});
+	}
+
+	async reviseGoal(input: { objective: string; tokenBudget?: number }): Promise<GoalModeState> {
+		const objective = input.objective.trim();
+		if (!objective) throw new Error("objective is required when op=revise");
+		validateTokenBudget(input.tokenBudget);
+		return await this.#withAccounting(async () => {
+			await this.#flushUsageLocked("suppressed");
+			const state = this.#getStateClone();
+			if (!state?.goal || state.goal.status === "complete" || state.goal.status === "dropped") {
+				throw new Error("cannot revise goal because no unfinished goal exists");
+			}
+			const previousGoal = cloneGoal(state.goal);
+			state.goal.objective = objective;
+			if (input.tokenBudget !== undefined) state.goal.tokenBudget = input.tokenBudget;
+			state.goal.updatedAt = this.#now();
+			await this.#commitState(state, { persist: state.enabled ? "goal" : "goal_paused" });
+			await this.#notifyLifecycle({ type: "revised", previousGoal, goal: state.goal });
 			return state;
 		});
 	}
@@ -429,6 +465,7 @@ export class GoalRuntime {
 			this.#budgetReportedFor = undefined;
 			this.#markActiveAccounting(state.goal);
 			await this.#commitState(state, { persist: "goal" });
+			await this.#notifyLifecycle({ type: "resumed", goal: state.goal });
 			return state;
 		});
 	}
@@ -448,6 +485,7 @@ export class GoalRuntime {
 			this.#clearActiveAccounting();
 			this.#budgetReportedFor = undefined;
 			await this.#commitState(state, { persist: "goal_paused" });
+			await this.#notifyLifecycle({ type: "paused", goal: state.goal, reason: "user" });
 			return state;
 		});
 	}
@@ -466,6 +504,7 @@ export class GoalRuntime {
 				state: { ...state, enabled: false, goal: dropped },
 			});
 			await this.#commitState(undefined, { persist: "none", emit: false });
+			await this.#notifyLifecycle({ type: "dropped", goal: dropped });
 			return dropped;
 		});
 	}
@@ -483,6 +522,7 @@ export class GoalRuntime {
 			if (state.goal.status === "dropped") {
 				throw new Error("cannot complete a dropped goal");
 			}
+			await this.#host.assertGoalCompletionReady?.();
 			state.enabled = false;
 			state.goal.status = "complete";
 			state.goal.updatedAt = this.#now();
@@ -491,6 +531,7 @@ export class GoalRuntime {
 			this.#clearActiveAccounting();
 			this.#budgetReportedFor = undefined;
 			await this.#commitState(state, { persist: "goal" });
+			await this.#notifyLifecycle({ type: "completed", goal: state.goal });
 			return state.goal;
 		});
 	}

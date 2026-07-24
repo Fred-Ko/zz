@@ -6,7 +6,7 @@ import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
 import { createTools, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
-// Regression for grievances #208 (find) and #209 (search): a multi-path call
+// Regression for find/search multi-path handling: a call
 // that includes an entry which does not exist on disk must not abort the whole
 // lookup. The tool should skip the missing entry and return matches from the
 // surviving entries, with a non-fatal "skipped missing paths" notice.

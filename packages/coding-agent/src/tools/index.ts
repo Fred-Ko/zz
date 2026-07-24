@@ -13,6 +13,7 @@ import { checkRubyKernelAvailability } from "../eval/rb/kernel";
 import type { ToolPathWithSource } from "../extensibility/custom-tools";
 import type { Skill } from "../extensibility/skills";
 import type { GoalModeState, GoalRuntime } from "../goals";
+import type { TaskLifecycleRuntime, TaskLifecycleState } from "../goals/task-lifecycle";
 import { GoalTool } from "../goals/tools/goal-tool";
 import type { HindsightSessionState } from "../hindsight/state";
 import type { LocalProtocolOptions } from "../internal-urls";
@@ -95,7 +96,6 @@ export * from "./memory-recall";
 export * from "./memory-reflect";
 export * from "./memory-retain";
 export * from "./read";
-export * from "./report-tool-issue";
 export * from "./resolve";
 export * from "./review";
 export * from "./todo";
@@ -300,6 +300,10 @@ export interface ToolSession {
 	getGoalModeState?: () => GoalModeState | undefined;
 	/** Goal runtime for the active agent session. */
 	getGoalRuntime?: () => GoalRuntime | undefined;
+	/** Persistent task lifecycle state associated with the goal, when committed. */
+	getTaskLifecycleState?: () => TaskLifecycleState | undefined;
+	/** Task lifecycle runtime used to reconcile interrupted write-ahead operations. */
+	getTaskLifecycleRuntime?: () => TaskLifecycleRuntime | undefined;
 	/** Get cumulative session usage statistics (input/output tokens, cost). */
 	getUsageStatistics?: () => UsageStatistics;
 	/** Current per-turn token budget {total, spent, hard} for the eval `budget` helper. */

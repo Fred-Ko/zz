@@ -97,7 +97,7 @@ Mnemopi:
 - Hindsight auto-retain settings:
   - `hindsight.retainEveryNTurns` default `3`
   - `hindsight.retainOverlapTurns` default `2`
-  - `hindsight.retainContext` default `"omp"`
+  - `hindsight.retainContext` legacy default `"omp"` (kept so existing Hindsight memories remain addressable)
   - `hindsight.retainMode` default `"full-session"`
 - Mnemopi retain settings:
   - `mnemopi.retainEveryNTurns` default `4`

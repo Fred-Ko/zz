@@ -380,6 +380,19 @@ export interface EditorTopBorder {
 	content: string;
 	/** Visible width of the content */
 	width: number;
+	/**
+	 * Additional status rows rendered inside the editor frame below the top
+	 * border. When present, the editor draws a divider between these rows and
+	 * the editable input area.
+	 */
+	rows?: readonly EditorTopBorderRow[];
+}
+
+export interface EditorTopBorderRow {
+	/** The row content (already styled). */
+	content: string;
+	/** Visible width of the row content. */
+	width: number;
 }
 
 interface HistoryEntry {
@@ -902,6 +915,21 @@ export class Editor implements Component, Focusable {
 					const truncatedWidth = visibleWidth(truncated);
 					const fillWidth = Math.max(0, topFillWidth - truncatedWidth);
 					result.push(topLeft + truncated + this.borderColor(box.horizontal.repeat(fillWidth)) + topRight);
+				}
+
+				if (topBorder.rows && topBorder.rows.length > 0) {
+					const detailLeft = this.borderColor(`${box.vertical}${padding(paddingX)}`);
+					const detailRight = this.borderColor(`${padding(paddingX)}${box.vertical}`);
+					for (const row of topBorder.rows) {
+						const rowContent =
+							row.width <= topFillWidth ? row.content : truncateToWidth(row.content, topFillWidth);
+						const rowWidth = row.width <= topFillWidth ? row.width : visibleWidth(rowContent);
+						result.push(detailLeft + rowContent + padding(Math.max(0, topFillWidth - rowWidth)) + detailRight);
+					}
+
+					const dividerLeft = this.borderColor(box.vertical === "|" ? "+" : "├");
+					const dividerRight = this.borderColor(box.vertical === "|" ? "+" : "┤");
+					result.push(dividerLeft + horizontal.repeat(Math.max(0, width - 2)) + dividerRight);
 				}
 			} else {
 				result.push(topLeft + horizontal.repeat(topFillWidth) + topRight);

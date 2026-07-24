@@ -54,7 +54,7 @@ describe("multiprocess file logging", () => {
 		// (toISOString is UTC and diverges around local midnight) — the invariant
 		// is one dated rotation file per pid.
 		for (const proc of processes) {
-			const perPid = new RegExp(`^omp\\.\\d{4}-\\d{2}-\\d{2}\\.${proc.pid}\\.log$`);
+			const perPid = new RegExp(`^zz\\.\\d{4}-\\d{2}-\\d{2}\\.${proc.pid}\\.log$`);
 			expect(entries.some(name => perPid.test(name))).toBe(true);
 		}
 		expect(entries.filter(name => name.endsWith("-audit.json"))).toHaveLength(2);
@@ -70,10 +70,10 @@ describe("multiprocess file logging", () => {
 
 		const date = "2026-07-01";
 		for (const [index, proc] of exited.entries()) {
-			const logPath = path.join(logsDir, `omp.${date}.${proc.pid}.log`);
+			const logPath = path.join(logsDir, `zz.${date}.${proc.pid}.log`);
 			await Bun.write(logPath, `completed process ${proc.pid}`);
 			await fs.utimes(logPath, index + 1, index + 1);
-			await Bun.write(path.join(logsDir, `.omp.${proc.pid}-audit.json`), "{}");
+			await Bun.write(path.join(logsDir, `.zz.${proc.pid}-audit.json`), "{}");
 		}
 
 		const probePath = await makeProbe(logsDir);
@@ -81,8 +81,8 @@ describe("multiprocess file logging", () => {
 		expect(await current.exited).toBe(0);
 
 		const entries = await fs.readdir(logsDir);
-		const completedLogs = entries.filter(name => name.startsWith(`omp.${date}.`));
+		const completedLogs = entries.filter(name => name.startsWith(`zz.${date}.`));
 		expect(completedLogs).toHaveLength(5);
-		expect(entries.filter(name => name.endsWith("-audit.json"))).toEqual([`.omp.${current.pid}-audit.json`]);
+		expect(entries.filter(name => name.endsWith("-audit.json"))).toEqual([`.zz.${current.pid}-audit.json`]);
 	});
 });

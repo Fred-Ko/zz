@@ -30,22 +30,22 @@ afterEach(async () => {
 
 describe("report bundle logs", () => {
 	it("collects every same-day PID log, not only the current process", async () => {
-		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "omp-report-logs-"));
-		const xdgStateHome = path.join(cleanupRoot, "state");
-		await fs.mkdir(path.join(xdgStateHome, "omp"), { recursive: true });
-		process.env.XDG_STATE_HOME = xdgStateHome;
-		setAgentDir(fallbackAgentDir);
+		cleanupRoot = await fs.mkdtemp(path.join(os.tmpdir(), "zz-report-logs-"));
+		setAgentDir(path.join(cleanupRoot, ".zz", "agent"));
 
 		const logsDir = getLogsDir();
 		await fs.mkdir(logsDir, { recursive: true });
 		const today = new Date().toISOString().slice(0, 10);
-		const crashedName = `omp.${today}.4242.log`;
+		const crashedName = `zz.${today}.4242.log`;
 		const rotatedName = `${crashedName}.1`;
-		const currentName = `omp.${today}.${process.pid}.log`;
+		const currentName = `zz.${today}.${process.pid}.log`;
+		const legacyName = `omp.${today}.31337.log`;
 		await Bun.write(path.join(logsDir, crashedName), '{"pid":4242,"message":"fatal in crashed pid"}\n');
 		await fs.utimes(path.join(logsDir, crashedName), 1, 1);
 		await Bun.write(path.join(logsDir, rotatedName), '{"pid":4242,"message":"earlier rotated crash output"}\n');
 		await fs.utimes(path.join(logsDir, rotatedName), 0, 0);
+		await Bun.write(path.join(logsDir, legacyName), '{"pid":31337,"message":"legacy log remains visible"}\n');
+		await fs.utimes(path.join(logsDir, legacyName), 1.5, 1.5);
 		await Bun.write(path.join(logsDir, currentName), '{"pid":0,"message":"later invocation"}\n');
 		await fs.utimes(path.join(logsDir, currentName), 2, 2);
 
@@ -59,6 +59,8 @@ describe("report bundle logs", () => {
 		expect(logsText).toContain("fatal in crashed pid");
 		expect(logsText).toContain(rotatedName);
 		expect(logsText).toContain("earlier rotated crash output");
+		expect(logsText).toContain(legacyName);
+		expect(logsText).toContain("legacy log remains visible");
 		expect(logsText).toContain(currentName);
 		expect(logsText).toContain("later invocation");
 		expect(logsText.indexOf(crashedName)).toBeLessThan(logsText.indexOf(currentName));

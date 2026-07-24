@@ -98,10 +98,14 @@ const modelSegment: StatusLineSegment = {
 		const state = ctx.session.state;
 		const opts = ctx.options.model ?? {};
 
-		let modelName = state.model?.name || state.model?.id || "no-model";
+		let modelName =
+			opts.showProvider && state.model?.provider
+				? `${state.model.provider}/${state.model.id || state.model.name || "no-model"}`
+				: state.model?.name || state.model?.id || "no-model";
 		if (modelName.startsWith("Claude ")) {
 			modelName = modelName.slice(7);
 		}
+		modelName = sanitizeStatusText(modelName);
 
 		// Resolve the current thinking-level display ("◉ xhigh", "⟳ auto", …)
 		// when the model supports thinking and the segment isn't hiding it.

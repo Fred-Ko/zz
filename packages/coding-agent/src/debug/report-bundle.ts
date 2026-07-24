@@ -85,7 +85,7 @@ export async function createReportBundle(options: ReportBundleOptions): Promise<
 	await fs.mkdir(reportsDir, { recursive: true });
 
 	const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-	const outputPath = path.join(reportsDir, `omp-report-${timestamp}.tar.gz`);
+	const outputPath = path.join(reportsDir, `zz-report-${timestamp}.tar.gz`);
 
 	const data: Record<string, string> = {};
 	const files: string[] = [];
@@ -244,7 +244,8 @@ export async function getLogText(): Promise<string> {
 
 /**
  * Concatenate the tail of every same-day process log so a report generated
- * after a crash still captures the fatal PID's `omp.<date>.<pid>.log`. Files
+ * after a crash still captures the fatal PID's `zz.<date>.<pid>.log` (and
+ * legacy `omp.<date>.<pid>.log`). Files
  * are ordered oldest-first by mtime and separated by a filename header.
  */
 async function collectSameDayLogs(linesPerFile: number): Promise<string> {
@@ -277,7 +278,7 @@ async function collectSameDayLogs(linesPerFile: number): Promise<string> {
 	return chunks.join("\n\n");
 }
 
-const LOG_FILE_PATTERN = new RegExp(`^${APP_NAME}\\.(\\d{4}-\\d{2}-\\d{2})\\.\\d+\\.log(?:\\.\\d+)?$`);
+const LOG_FILE_PATTERN = new RegExp(`^(?:${APP_NAME}|omp)\\.(\\d{4}-\\d{2}-\\d{2})\\.\\d+\\.log(?:\\.\\d+)?$`);
 
 export async function createDebugLogSource(): Promise<DebugLogSource> {
 	const logsDir = getLogsDir();

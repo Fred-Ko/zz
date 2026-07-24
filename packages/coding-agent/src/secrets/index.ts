@@ -1,7 +1,7 @@
 import * as crypto from "node:crypto";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
-import { getAgentDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
+import { CONFIG_DIR_NAME, getAgentDir, isEnoent, logger } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
 import { regexHasUnresolvableShortMatchFallback, type SecretEntry, sanitizeSecretFriendlyName } from "./obfuscator";
 import { compileSecretRegex } from "./regex";
@@ -110,11 +110,18 @@ export {
  * Project-local entries override global entries with matching content.
  */
 export async function loadSecrets(cwd: string, agentDir: string): Promise<SecretEntry[]> {
-	const projectPath = path.join(cwd, ".omp", "secrets.yml");
+	const projectPath = path.join(cwd, CONFIG_DIR_NAME, "secrets.yml");
+	const legacyProjectPath = path.join(cwd, ".omp", "secrets.yml");
 	const globalPath = path.join(agentDir, "secrets.yml");
 
 	const globalEntries = await loadSecretsFile(globalPath);
-	const projectEntries = await loadSecretsFile(projectPath);
+	const canonicalProjectEntries = await loadSecretsFile(projectPath);
+	const legacyProjectEntries = CONFIG_DIR_NAME === ".omp" ? [] : await loadSecretsFile(legacyProjectPath);
+	const canonicalContents = new Set(canonicalProjectEntries.map(entry => entry.content));
+	const projectEntries = [
+		...legacyProjectEntries.filter(entry => !canonicalContents.has(entry.content)),
+		...canonicalProjectEntries,
+	];
 
 	if (globalEntries.length === 0) return projectEntries;
 	if (projectEntries.length === 0) return globalEntries;

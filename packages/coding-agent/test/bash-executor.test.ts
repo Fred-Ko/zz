@@ -451,6 +451,8 @@ exit 64
 
 		const shellDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-zsh-shellpath-"));
 		fs.writeFileSync(path.join(shellDir, ".zshrc"), "alias pi_shell_alias='printf zsh-alias-ok\\\\n'\n");
+		const previousZdotdir = process.env.ZDOTDIR;
+		process.env.ZDOTDIR = path.join(shellDir, "host-zdotdir");
 		Settings.instance.set("shellPath", zshPath);
 
 		vi.spyOn(Settings.prototype, "getShellConfig").mockReturnValue({
@@ -475,6 +477,11 @@ exit 64
 			expect(result.exitCode).toBe(0);
 			expect(result.output.trim()).toBe("zsh-alias-ok");
 		} finally {
+			if (previousZdotdir === undefined) {
+				delete process.env.ZDOTDIR;
+			} else {
+				process.env.ZDOTDIR = previousZdotdir;
+			}
 			removeSyncWithRetries(shellDir);
 		}
 	});

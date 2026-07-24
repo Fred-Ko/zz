@@ -36,6 +36,7 @@ import {
 } from "../../config/settings";
 import type {
 	SettingTab,
+	StatusLineLayout,
 	StatusLinePreset,
 	StatusLineSegmentId,
 	StatusLineSeparatorStyle,
@@ -510,6 +511,7 @@ export interface SettingsRuntimeContext {
 /** Status line settings subset for preview */
 export interface StatusLinePreviewSettings {
 	preset?: StatusLinePreset;
+	layout?: StatusLineLayout;
 	leftSegments?: StatusLineSegmentId[];
 	rightSegments?: StatusLineSegmentId[];
 	separator?: StatusLineSeparatorStyle;
@@ -1086,6 +1088,13 @@ export class SettingsSelectorComponent implements Component {
 				const separator = settings.get("statusLine.separator");
 				this.callbacks.onStatusLinePreview?.({ separator });
 			};
+		} else if (def.path === "statusLine.layout") {
+			onPreview = value => {
+				this.callbacks.onStatusLinePreview?.({ layout: value as StatusLineLayout });
+			};
+			onPreviewCancel = () => {
+				this.callbacks.onStatusLinePreview?.({ layout: settings.get("statusLine.layout") });
+			};
 		} else if (def.path === "snapcompact.shape") {
 			const shapePreview = new SnapcompactShapePreview(currentValue, {
 				model: this.context.model,
@@ -1329,6 +1338,7 @@ export class SettingsSelectorComponent implements Component {
 	#triggerStatusLinePreview(): void {
 		const statusLineSettings: StatusLinePreviewSettings = {
 			preset: settings.get("statusLine.preset"),
+			layout: settings.get("statusLine.layout"),
 			leftSegments: settings.get("statusLine.leftSegments"),
 			rightSegments: settings.get("statusLine.rightSegments"),
 			separator: settings.get("statusLine.separator"),

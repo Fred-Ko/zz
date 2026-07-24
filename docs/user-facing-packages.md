@@ -4,7 +4,7 @@ This page indexes README-only user-facing package CLIs and features that need ro
 
 ## Root-docs policy
 
-- **Include** root docs coverage for package-local CLIs, extension features, dashboards, and benchmark runners that users can run directly or through `omp`.
+- **Include** root docs coverage for package-local CLIs, extension features, dashboards, and benchmark runners that users can run directly or through `zz`.
 - **Exclude explicitly** when a package/crate is internal implementation only; point to the architecture doc that owns it.
 - Package READMEs and manifests remain the source of truth for package-local setup and flags; root docs make the feature discoverable and link to exact source paths.
 - Internal Rust crates remain covered by native architecture docs unless promoted as standalone user-facing commands or APIs. The contributor-facing map lives at [`native-crates.md`](./native-crates.md); today every `crates/*` entry is internal to `@oh-my-pi/pi-natives` and the embedded shell, so [`natives-architecture.md`](./natives-architecture.md) and the surrounding native docs own them.
@@ -28,9 +28,9 @@ Sources: [`packages/swarm-extension/README.md`](../packages/swarm-extension/READ
 Sources: [`packages/terminal-bench/README.md`](../packages/terminal-bench/README.md), [`packages/terminal-bench/package.json`](../packages/terminal-bench/package.json), [`packages/terminal-bench/src/runner.ts`](../packages/terminal-bench/src/runner.ts), [`packages/terminal-bench/agent/omp_local.py`](../packages/terminal-bench/agent/omp_local.py).
 
 - Package: private `@oh-my-pi/terminal-bench`; bin: `tb2`.
-- Feature: runs `harbor-framework/terminal-bench-2` against a local or published `omp` build with a live progress, spend, token, ETA, and pass/fail dashboard.
+- Feature: runs `harbor-framework/terminal-bench-2` against a local or published `zz` build with a live progress, spend, token, ETA, and pass/fail dashboard.
 - CLI: `bun src/runner.ts [options] [-- <extra harbor args>]`; package bin exposes `tb2`.
-- Modes: default `omp` agent, `oracle`/`nop`/any Harbor agent via `--agent`; local source packing by default, published npm install via `--install published`; `cleanup` command removes leftover Harbor Docker resources.
+- Modes: default `zz` agent, `oracle`/`nop`/any Harbor agent via `--agent`; local source packing by default, published npm install via `--install published`; `cleanup` command removes leftover Harbor Docker resources.
 - Key inputs: `--model`, `--tasks`, `--concurrency`, `--attempts`, `--include`, `--exclude`, `--dataset`, `--thinking`, `--advisor-model`, gateway options, `--tarball`, `--no-build`, `--dry-run`, and passthrough Harbor args.
 - Outputs: Harbor job directories plus `_bench/<jobName>/report.md`, `harbor.log`, and generated `models.yml` under `--jobs-dir`.
 - Side effects/limits: requires Docker, Harbor, and usually the host auth gateway; local install packs `packages/coding-agent`; web search is off by default because it cannot authenticate through the gateway; Alpine/musl task images are unsupported by the native prebuilds.
@@ -39,11 +39,11 @@ Sources: [`packages/terminal-bench/README.md`](../packages/terminal-bench/README
 
 Sources: [`packages/stats/README.md`](../packages/stats/README.md), [`packages/stats/package.json`](../packages/stats/package.json), [`packages/coding-agent/src/cli/stats-cli.ts`](../packages/coding-agent/src/cli/stats-cli.ts).
 
-- Package: `@oh-my-pi/omp-stats`; bin: `omp-stats`; main user path: `omp stats`.
+- Package: `@oh-my-pi/omp-stats`; bin: `omp-stats`; main user path: `zz stats`.
 - Feature: local observability dashboard for AI usage statistics from session JSONL logs.
-- CLI modes: `omp stats` starts the dashboard server, opens `http://localhost:3847`, and keeps running; `omp stats --port <port>` changes the port; `omp stats --summary` prints a console summary; `omp stats --json` prints JSON and exits.
+- CLI modes: `zz stats` starts the dashboard server, opens `http://localhost:3847`, and keeps running; `zz stats --port <port>` changes the port; `zz stats --summary` prints a console summary; `zz stats --json` prints JSON and exits.
 - Programmatic API: exports helpers such as `syncAllSessions()` and `getDashboardStats()` for embedding.
-- Inputs/storage: reads `~/.omp/agent/sessions/`; stores aggregates in `~/.omp/stats.db`.
+- Inputs/storage: reads `~/.zz/agent/sessions/`; stores aggregates in `~/.zz/stats.db`.
 - Outputs: dashboard metrics and API endpoints including `/api/stats`, `/api/stats/models`, `/api/stats/folders`, `/api/stats/timeseries`, and `/api/sync`.
 - Side effects/limits: syncs session files before output; long-running dashboard stops on `Ctrl+C` and closes the stats database.
 

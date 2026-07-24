@@ -17,6 +17,7 @@
  * 4. Clearing the provider falls back to the eager slot.
  */
 import { describe, expect, it } from "bun:test";
+import { visibleWidth } from "@oh-my-pi/pi-tui";
 import { Editor, type EditorTopBorder } from "@oh-my-pi/pi-tui/components/editor";
 import { defaultEditorTheme } from "./test-themes";
 
@@ -89,5 +90,24 @@ describe("Editor lazy top-border provider (#4145)", () => {
 		expect(widths).toHaveLength(2);
 		expect(widths[0]).toBe(editor.getTopBorderAvailableWidth(80));
 		expect(widths[1]).toBe(editor.getTopBorderAvailableWidth(120));
+	});
+
+	it("renders additional status rows inside the frame with a divider above the input", () => {
+		const editor = new Editor(defaultEditorTheme);
+		editor.setTopBorder({
+			content: "model: gpt-5.6-sol",
+			width: 18,
+			rows: [
+				{ content: "workspace: ~/demo", width: 17 },
+				{ content: "context: 84K/105K", width: 17 },
+			],
+		});
+
+		const frame = editor.render(48);
+		expect(frame[0]).toContain("model: gpt-5.6-sol");
+		expect(frame[1]).toContain("workspace: ~/demo");
+		expect(frame[2]).toContain("context: 84K/105K");
+		expect(frame[3]).toContain("-");
+		expect(frame.every(line => visibleWidth(line) === 48)).toBe(true);
 	});
 });

@@ -7,6 +7,7 @@ import {
 	renderTrustedObjective,
 } from "@oh-my-pi/pi-coding-agent/goals/runtime";
 import type { Goal, GoalModeState, GoalRuntimeEvent, GoalTokenUsage } from "@oh-my-pi/pi-coding-agent/goals/state";
+import type { GoalLifecycleEvent } from "@oh-my-pi/pi-coding-agent/goals/task-lifecycle";
 import { escapeXmlText } from "@oh-my-pi/pi-utils";
 
 function createUsage(overrides: Partial<GoalTokenUsage> = {}): GoalTokenUsage {
@@ -52,11 +53,19 @@ function cloneEvent(event: GoalRuntimeEvent): GoalRuntimeEvent {
 	return { ...event };
 }
 
-function createHarness(initial: { state?: GoalModeState; usage?: GoalTokenUsage; now?: number } = {}) {
+function createHarness(
+	initial: {
+		state?: GoalModeState;
+		usage?: GoalTokenUsage;
+		now?: number;
+		assertGoalCompletionReady?: () => Promise<void>;
+	} = {},
+) {
 	let state = cloneState(initial.state);
 	let usage = createUsage(initial.usage);
 	let now = initial.now ?? 0;
 	const events: GoalRuntimeEvent[] = [];
+	const lifecycleEvents: GoalLifecycleEvent[] = [];
 	const persists: Array<{ mode: "goal" | "goal_paused" | "none"; state?: GoalModeState }> = [];
 	const hiddenMessages: Array<{ customType: string; content: string; deliverAs?: "steer" | "followUp" | "nextTurn" }> =
 		[];
@@ -75,6 +84,10 @@ function createHarness(initial: { state?: GoalModeState; usage?: GoalTokenUsage;
 		sendHiddenMessage: async message => {
 			hiddenMessages.push({ ...message });
 		},
+		assertGoalCompletionReady: initial.assertGoalCompletionReady,
+		handleLifecycleEvent: event => {
+			lifecycleEvents.push(event);
+		},
 		now: () => now,
 	};
 	return {
@@ -90,12 +103,30 @@ function createHarness(initial: { state?: GoalModeState; usage?: GoalTokenUsage;
 			now += ms;
 		},
 		events,
+		lifecycleEvents,
 		persists,
 		hiddenMessages,
 	};
 }
 
 describe("goal runtime", () => {
+	it("revises an unfinished goal in place and emits lifecycle commitment events", async () => {
+		const harness = createHarness();
+		const created = await harness.runtime.createGoal({ objective: "Ship recovery", tokenBudget: 100 });
+		const revised = await harness.runtime.reviseGoal({
+			objective: "Ship recovery without Redis",
+			tokenBudget: 120,
+		});
+
+		expect(revised.goal).toMatchObject({
+			id: created.goal.id,
+			objective: "Ship recovery without Redis",
+			tokenBudget: 120,
+			status: "active",
+		});
+		expect(harness.lifecycleEvents.map(event => event.type)).toEqual(["created", "revised"]);
+	});
+
 	it("counts cache writes but ignores cache reads in token deltas", () => {
 		expect(
 			goalTokenDelta(
@@ -352,6 +383,23 @@ describe("goal runtime", () => {
 		expect(state?.mode).toBe("exiting");
 		expect(state?.reason).toBe("completed");
 		expect(state?.goal.status).toBe("complete");
+	});
+
+	it("keeps the goal active when the completion readiness gate rejects", async () => {
+		const harness = createHarness({
+			state: { enabled: true, mode: "active", goal: createGoal() },
+			assertGoalCompletionReady: async () => {
+				throw new Error("verification is stale");
+			},
+		});
+
+		await expect(harness.runtime.completeGoalFromTool()).rejects.toThrow("verification is stale");
+		expect(harness.getState()).toMatchObject({
+			enabled: true,
+			mode: "active",
+			goal: { status: "active" },
+		});
+		expect(harness.lifecycleEvents).toHaveLength(0);
 	});
 
 	it("dropGoal emits goal_updated with the dropped goal and clears persisted state", async () => {

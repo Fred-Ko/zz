@@ -11,6 +11,7 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import { logger } from "@oh-my-pi/pi-utils";
 import { onHindsightScopeChanged, type Settings } from "../config/settings";
 import type { MemoryBackend, MemoryBackendStartOptions } from "../memory-backend/types";
+import workflowMemoryInstructions from "../prompts/goals/workflow-memory-instructions.md" with { type: "text" };
 import type { AgentSession } from "../session/agent-session";
 import { type BankScope, computeBankScope } from "./bank";
 import { createHindsightClient } from "./client";
@@ -79,6 +80,7 @@ export const hindsightBackend: MemoryBackend = {
 			logger.warn("Hindsight: memory.backend=hindsight but hindsight.apiUrl is unset; backend inert.");
 			return;
 		}
+		if (config.integrationMode === "workflow-managed") return;
 
 		await installPrimaryState(session, settings, new Set());
 	},
@@ -95,7 +97,7 @@ export const hindsightBackend: MemoryBackend = {
 		// Order: static instructions → mental models (stable, curated) → recall
 		// (volatile per turn). Stable context first so the LLM's prior is
 		// anchored on curated knowledge.
-		const parts = [STATIC_INSTRUCTIONS];
+		const parts = [config.integrationMode === "workflow-managed" ? workflowMemoryInstructions : STATIC_INSTRUCTIONS];
 		if (mentalModelsSnippet) parts.push(mentalModelsSnippet);
 		if (recallSnippet) parts.push(recallSnippet);
 		return parts.join("\n\n");
@@ -124,7 +126,10 @@ export const hindsightBackend: MemoryBackend = {
 	},
 
 	async enqueue(_agentDir, _cwd, session): Promise<void> {
-		const state = session?.getHindsightSessionState();
+		if (!session) return;
+		const config = loadHindsightConfig(session.settings);
+		if (config.integrationMode === "workflow-managed") return;
+		const state = session.getHindsightSessionState();
 		const primary = state?.aliasOf ? undefined : state;
 		if (!primary) return;
 		await primary.flushRetainQueue();
@@ -138,6 +143,7 @@ export const hindsightBackend: MemoryBackend = {
 	): Promise<string | undefined> {
 		const config = loadHindsightConfig(settings);
 		if (!isHindsightConfigured(config)) return undefined;
+		if (config.integrationMode === "workflow-managed") return undefined;
 
 		const state = session?.getHindsightSessionState();
 		if (!state) return undefined;

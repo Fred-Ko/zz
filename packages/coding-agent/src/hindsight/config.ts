@@ -14,6 +14,7 @@ import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
 
 export type HindsightScoping = "global" | "per-project" | "per-project-tagged";
+export type HindsightIntegrationMode = "legacy" | "workflow-managed";
 
 export interface HindsightConfig {
 	hindsightApiUrl: string | null;
@@ -24,6 +25,14 @@ export interface HindsightConfig {
 	scoping: HindsightScoping;
 	bankMission: string;
 	retainMission: string | null;
+	integrationMode?: HindsightIntegrationMode;
+	exposeModelTools?: boolean;
+	userId?: string;
+	workflowTaskTokens?: number;
+	workflowRepoTokens?: number;
+	workflowUserTokens?: number;
+	outboxRetryMax?: number;
+	redactionEnabled?: boolean;
 
 	autoRecall: boolean;
 	autoRetain: boolean;
@@ -153,14 +162,28 @@ export function loadHindsightConfig(settings: Settings, env: NodeJS.ProcessEnv =
 		scoping: scopingEnv ?? settingsScoping ?? "per-project-tagged",
 		bankMission: bankMissionEnv ?? settings.get("hindsight.bankMission") ?? "",
 		retainMission: settings.get("hindsight.retainMission") ?? null,
+		integrationMode: settings.get("hindsight.integrationMode"),
+		exposeModelTools: settings.get("hindsight.exposeModelTools"),
+		userId: settings.get("hindsight.userId"),
+		workflowTaskTokens: settings.get("hindsight.workflowTaskTokens"),
+		workflowRepoTokens: settings.get("hindsight.workflowRepoTokens"),
+		workflowUserTokens: settings.get("hindsight.workflowUserTokens"),
+		outboxRetryMax: settings.get("hindsight.outboxRetryMax"),
+		redactionEnabled: settings.get("hindsight.redactionEnabled"),
 
-		autoRecall: autoRecallEnv ?? settings.get("hindsight.autoRecall"),
-		autoRetain: autoRetainEnv ?? settings.get("hindsight.autoRetain"),
+		autoRecall:
+			settings.get("hindsight.integrationMode") === "workflow-managed"
+				? false
+				: (autoRecallEnv ?? settings.get("hindsight.autoRecall")),
+		autoRetain:
+			settings.get("hindsight.integrationMode") === "workflow-managed"
+				? false
+				: (autoRetainEnv ?? settings.get("hindsight.autoRetain")),
 
 		retainMode: retainModeEnv ?? settingsRetainMode ?? "full-session",
 		retainEveryNTurns: retainEveryNTurnsEnv ?? settings.get("hindsight.retainEveryNTurns"),
 		retainOverlapTurns: settings.get("hindsight.retainOverlapTurns"),
-		retainContext: settings.get("hindsight.retainContext") ?? "omp",
+		retainContext: settings.get("hindsight.retainContext") ?? "zz",
 
 		recallBudget: recallBudgetEnv ?? settingsRecallBudget ?? "mid",
 		recallMaxTokens: recallMaxTokensEnv ?? settings.get("hindsight.recallMaxTokens"),
@@ -176,8 +199,14 @@ export function loadHindsightConfig(settings: Settings, env: NodeJS.ProcessEnv =
 		recallTimeoutMs: recallTimeoutMsEnv ?? settings.get("hindsight.recallTimeoutMs"),
 		retainTimeoutMs: retainTimeoutMsEnv ?? settings.get("hindsight.retainTimeoutMs"),
 
-		mentalModelsEnabled: settings.get("hindsight.mentalModelsEnabled"),
-		mentalModelAutoSeed: settings.get("hindsight.mentalModelAutoSeed"),
+		mentalModelsEnabled:
+			settings.get("hindsight.integrationMode") === "workflow-managed"
+				? false
+				: settings.get("hindsight.mentalModelsEnabled"),
+		mentalModelAutoSeed:
+			settings.get("hindsight.integrationMode") === "workflow-managed"
+				? false
+				: settings.get("hindsight.mentalModelAutoSeed"),
 		mentalModelRefreshIntervalMs: settings.get("hindsight.mentalModelRefreshIntervalMs"),
 		mentalModelMaxRenderChars: settings.get("hindsight.mentalModelMaxRenderChars"),
 	};

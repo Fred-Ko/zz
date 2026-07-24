@@ -1,6 +1,6 @@
 ---
 name: authoring-hooks
-description: Use when creating a new omp hook. Covers HookAPI, event catalog, blocking/overriding tool calls, and context modification.
+description: Use when creating a new zz hook. Covers HookAPI, event catalog, blocking/overriding tool calls, and context modification.
 ---
 
 # Authoring Hooks
@@ -14,7 +14,7 @@ Hooks are event-driven interceptors that run alongside the agent loop. They are 
 ```ts
 import type { HookAPI } from "@oh-my-pi/pi-coding-agent/extensibility/hooks";
 
-export default function myHook(omp: HookAPI): void {
+export default function myHook(zz: HookAPI): void {
   omp.on("tool_call", async (event, ctx) => {
     // intercept every tool call
   });
@@ -153,7 +153,7 @@ Contract:
 ```ts
 import type { HookAPI } from "@oh-my-pi/pi-coding-agent/extensibility/hooks";
 
-export default function rmRfBlocker(omp: HookAPI): void {
+export default function rmRfBlocker(zz: HookAPI): void {
   omp.on("tool_call", async (event, ctx) => {
     if (event.toolName !== "bash") return;
 
@@ -191,7 +191,7 @@ const SECRET_PATTERNS = [
   /\b[a-zA-Z0-9_-]{20,}\s*=\s*["']?[a-zA-Z0-9._/+=-]{20,}["']?/g,
 ];
 
-export default function apiKeyRedactor(omp: HookAPI): void {
+export default function apiKeyRedactor(zz: HookAPI): void {
   omp.on("tool_result", async (event) => {
     if (event.isError) return;
 
@@ -216,7 +216,7 @@ export default function apiKeyRedactor(omp: HookAPI): void {
 ```ts
 import type { HookAPI } from "@oh-my-pi/pi-coding-agent/extensibility/hooks";
 
-export default function contextFilter(omp: HookAPI): void {
+export default function contextFilter(zz: HookAPI): void {
   omp.on("context", async (event) => {
     const MAX_TOOL_OUTPUT_CHARS = 8_000;
 

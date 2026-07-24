@@ -101,10 +101,16 @@ export function parseEnvFile(filePath: string): Record<string, string> {
 		// File doesn't exist or can't be read - return empty result
 	}
 
-	// OMP_ overrides PI_
+	// Legacy OMP_ values override PI_; canonical ZZ_ values win over both.
 	for (const k in result) {
 		if (k.startsWith("OMP_")) {
 			result[`PI_${k.slice(4)}`] = result[k];
+		}
+	}
+	for (const k in result) {
+		if (k.startsWith("ZZ_")) {
+			result[`PI_${k.slice(3)}`] = result[k];
+			result[`OMP_${k.slice(3)}`] ??= result[k];
 		}
 	}
 
@@ -122,6 +128,16 @@ for (const key of Object.keys(Bun.env)) {
 	if (!isSafeEnvName(key) || isMacosMallocStackLoggingEnvName(key) || value === undefined || !isSafeEnvValue(value)) {
 		delete Bun.env[key];
 	}
+}
+
+// Make canonical ZZ_* process variables available to still-compatible internal
+// consumers while the public environment contract moves away from OMP_*.
+for (const key of Object.keys(Bun.env)) {
+	if (!key.startsWith("ZZ_")) continue;
+	const value = Bun.env[key];
+	if (value === undefined) continue;
+	Bun.env[`PI_${key.slice(3)}`] = value;
+	Bun.env[`OMP_${key.slice(3)}`] ??= value;
 }
 
 for (const file of [projectEnv, agentEnv, piEnv, homeEnv]) {

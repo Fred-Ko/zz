@@ -14,6 +14,7 @@ import { logger, Snowflake } from "@oh-my-pi/pi-utils";
 import type { ModelRegistry } from "../config/model-registry";
 import type { Settings } from "../config/settings";
 import type { ExtensionRunner, SessionBeforeSwitchResult } from "../extensibility/extensions";
+import type { TaskLifecycleHandoff } from "../goals/task-lifecycle";
 import { obfuscateProviderContext, type SecretObfuscator } from "../secrets/obfuscator";
 import type { HandoffResult, SessionHandoffOptions } from "./agent-session-types";
 import type { BashSessionTransition } from "./bash-runner";
@@ -59,6 +60,8 @@ export interface SessionHandoffHost {
 	clearSessionScopedToolState(): void;
 	clearFreshProviderSessionId(): void;
 	syncAgentSessionId(): void;
+	prepareTaskLifecycleHandoff(): Promise<TaskLifecycleHandoff | undefined>;
+	resumeTaskLifecycleHandoff(handoff: TaskLifecycleHandoff): Promise<void>;
 	rekeyMemoryForCurrentSessionId(): void;
 	resetMemoryContextForNewTranscript(): Promise<void>;
 	clearPendingNextTurnMessages(): void;
@@ -223,6 +226,7 @@ export class SessionHandoff {
 				}
 			}
 			await this.#host.flushPendingBash();
+			const taskLifecycleHandoff = await this.#host.prepareTaskLifecycleHandoff();
 			await this.#host.sessionManager.flush();
 			const bashTransition = this.#host.beginBashSessionTransition();
 			this.#host.cancelOwnAsyncJobs();
@@ -253,6 +257,9 @@ export class SessionHandoff {
 			this.#host.agent.replaceQueues(preservedSteering, preservedFollowUp);
 			this.#host.clearFreshProviderSessionId();
 			this.#host.syncAgentSessionId();
+			if (taskLifecycleHandoff) {
+				await this.#host.resumeTaskLifecycleHandoff(taskLifecycleHandoff);
+			}
 			this.#host.rekeyMemoryForCurrentSessionId();
 			await this.#host.resetMemoryContextForNewTranscript();
 			this.#host.clearPendingNextTurnMessages();

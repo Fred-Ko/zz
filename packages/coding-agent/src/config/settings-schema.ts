@@ -134,7 +134,7 @@ export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 		"Git",
 	],
 	context: ["General", "Compaction", "Rules (TTSR)", "Experimental"],
-	memory: ["General", "Auto-Learn", "Mnemopi", "Hindsight"],
+	memory: ["General", "Auto-Learn", "Mnemopi", "Workflow", "Hindsight"],
 	files: ["Editing", "Reading", "Read Summaries", "LSP"],
 	shell: ["Bash", "Eval & Runtimes"],
 	tools: [
@@ -518,7 +518,7 @@ export const SETTINGS_SCHEMA = {
 			group: "Services",
 			label: "Max In-Flight Requests",
 			description:
-				'Maximum concurrent LLM requests per provider id (for example "openai" or "anthropic"), shared across local OMP processes with this config root. Omitted providers are unlimited.',
+				'Maximum concurrent LLM requests per provider id (for example "openai" or "anthropic"), shared across local ZZ processes with this config root. Omitted providers are unlimited.',
 		},
 	},
 
@@ -542,7 +542,7 @@ export const SETTINGS_SCHEMA = {
 				{
 					value: "project",
 					label: "Per-project",
-					description: "Save project role models in .omp/config.yml; missing project roles use global defaults",
+					description: "Save project role models in .zz/config.yml; missing project roles use global defaults",
 				},
 			],
 		},
@@ -652,6 +652,22 @@ export const SETTINGS_SCHEMA = {
 				{ value: "block", label: "Block", description: "Solid blocks" },
 				{ value: "none", label: "None", description: "Space only" },
 				{ value: "ascii", label: "ASCII", description: "Greater-than signs" },
+			],
+		},
+	},
+
+	"statusLine.layout": {
+		type: "enum",
+		values: ["single", "detailed"] as const,
+		default: "single",
+		ui: {
+			tab: "appearance",
+			group: "Status Line",
+			label: "상태줄 레이아웃",
+			description: "단일 행 또는 모델·작업공간·사용량을 분리한 상세 다중 행 레이아웃",
+			options: [
+				{ value: "single", label: "단일 행", description: "기존처럼 한 줄에 상태를 표시합니다." },
+				{ value: "detailed", label: "상세", description: "상태를 의미별 여러 행으로 나누어 표시합니다." },
 			],
 		},
 	},
@@ -1777,7 +1793,7 @@ export const SETTINGS_SCHEMA = {
 			tab: "interaction",
 			group: "Startup & Updates",
 			label: "Check for Updates",
-			description: "Check for omp updates on startup",
+			description: "Check for zz updates on startup",
 		},
 	},
 
@@ -2847,6 +2863,25 @@ export const SETTINGS_SCHEMA = {
 	"mnemopi.injectionTokenLimit": { type: "number", default: 5000 },
 	"mnemopi.debug": { type: "boolean", default: false },
 
+	// Shared task workflow coordinator
+	"workflow.coordinatorUrl": {
+		type: "string",
+		default: undefined,
+		ui: {
+			tab: "memory",
+			group: "Workflow",
+			label: "Workflow Coordinator URL",
+			description: "Shared task registry URL; unset keeps task lifecycle local to this session",
+		},
+	},
+	"workflow.machineIdFile": { type: "string", default: undefined },
+	"workflow.requestTimeoutMs": { type: "number", default: 2_500 },
+	"workflow.heartbeatIntervalSeconds": { type: "number", default: 15 },
+	"workflow.staleAfterSeconds": { type: "number", default: 60 },
+	"workflow.workspaceLeaseSeconds": { type: "number", default: 90 },
+	"workflow.degradedAllowExecution": { type: "boolean", default: true },
+	"workflow.checkpointRemote": { type: "string", default: undefined },
+
 	// Hindsight (https://hindsight.vectorize.io)
 	"hindsight.apiUrl": {
 		type: "string",
@@ -2919,6 +2954,26 @@ export const SETTINGS_SCHEMA = {
 	},
 	"hindsight.bankMission": { type: "string", default: undefined },
 	"hindsight.retainMission": { type: "string", default: undefined },
+	"hindsight.integrationMode": {
+		type: "enum",
+		values: ["legacy", "workflow-managed"] as const,
+		default: "legacy",
+		ui: {
+			tab: "memory",
+			group: "Hindsight",
+			label: "Hindsight Integration Mode",
+			description:
+				"workflow-managed disables transcript auto-memory and retains only curated, verified task knowledge",
+			condition: "hindsightActive",
+		},
+	},
+	"hindsight.exposeModelTools": { type: "boolean", default: false },
+	"hindsight.userId": { type: "string", default: "default" },
+	"hindsight.workflowTaskTokens": { type: "number", default: 1_800 },
+	"hindsight.workflowRepoTokens": { type: "number", default: 1_200 },
+	"hindsight.workflowUserTokens": { type: "number", default: 600 },
+	"hindsight.outboxRetryMax": { type: "number", default: 20 },
+	"hindsight.redactionEnabled": { type: "boolean", default: true },
 
 	"hindsight.autoRecall": {
 		type: "boolean",
@@ -3945,7 +4000,7 @@ export const SETTINGS_SCHEMA = {
 			tab: "tools",
 			group: "GitHub",
 			label: "GitHub View Cache",
-			description: "Cache rendered issue/PR view output in ~/.omp/cache/github-cache.db so repeated reads are free",
+			description: "Cache rendered issue/PR view output in ~/.zz/cache/github-cache.db so repeated reads are free",
 		},
 	},
 
@@ -4409,7 +4464,7 @@ export const SETTINGS_SCHEMA = {
 			group: "Isolation",
 			label: "Worktree Base Directory",
 			description:
-				"Base directory for agent-managed worktrees — task-isolation copies, `github` PR checkouts, and `omp worktree` cleanup all live here. Unset uses ~/.omp/wt. Must be an absolute or ~-relative path; relative paths are ignored. The OMP_WORKTREE_DIR env var overrides this.",
+				"Base directory for agent-managed worktrees — task-isolation copies, `github` PR checkouts, and `zz worktree` cleanup all live here. Unset uses ~/.zz/wt. Must be an absolute or ~-relative path; relative paths are ignored. The ZZ_WORKTREE_DIR env var overrides this (legacy OMP_WORKTREE_DIR is also accepted).",
 		},
 	},
 
@@ -5288,53 +5343,6 @@ export const SETTINGS_SCHEMA = {
 
 	"commit.changelogMaxDiffChars": { type: "number", default: 120000 },
 
-	"dev.autoqa": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "tools",
-			group: "Developer",
-			label: "Auto QA",
-			description:
-				"Automated tool issue reporting (xd://report_issue). On by default; the first report asks for consent, and denying it disables reporting until re-enabled explicitly",
-		},
-	},
-
-	"dev.autoqaPush.endpoint": {
-		type: "string",
-		default: "https://qa.omp.sh/v1/grievances" as const,
-		ui: {
-			tab: "tools",
-			group: "Developer",
-			label: "Auto QA Push Endpoint",
-			description: "Full URL receiving Auto QA JSON reports (default https://qa.omp.sh/v1/grievances)",
-		},
-	},
-
-	"dev.autoqaPush.token": {
-		type: "string",
-		default: undefined,
-	},
-
-	/**
-	 * User decision on sharing automatic `report_tool_issue` grievances.
-	 *
-	 *   - `"unset"`  — never asked; the first `report_tool_issue` invocation
-	 *                  pops a consent dialog and persists the answer here.
-	 *   - `"granted"` — record and (when push is configured) ship grievances.
-	 *   - `"denied"`  — silently no-op every `report_tool_issue` call.
-	 *
-	 * Owned by `packages/coding-agent/src/tools/report-tool-issue.ts` via the
-	 * process-global consent handler registered by `InteractiveMode`.
-	 *
-	 * @default "unset"
-	 */
-	"dev.autoqaConsent": {
-		type: "enum",
-		values: ["unset", "granted", "denied"] as const,
-		default: "unset" as const,
-	},
-
 	"gc.blobs": { type: "boolean", default: true },
 
 	"gc.archive": { type: "boolean", default: true },
@@ -5434,6 +5442,9 @@ export type StatusLinePreset = SettingValue<"statusLine.preset">;
 
 /** Status line separator style - derived from schema */
 export type StatusLineSeparatorStyle = SettingValue<"statusLine.separator">;
+
+/** Status line layout - derived from schema */
+export type StatusLineLayout = SettingValue<"statusLine.layout">;
 
 /** Tree selector filter mode - derived from schema */
 export type TreeFilterMode = SettingValue<"treeFilterMode">;
@@ -5564,6 +5575,7 @@ export interface ExaSettings {
 
 export interface StatusLineSettings {
 	preset: StatusLinePreset;
+	layout: StatusLineLayout;
 	separator: StatusLineSeparatorStyle;
 	showHookStatus: boolean;
 	leftSegments: StatusLineSegmentId[];

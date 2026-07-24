@@ -443,8 +443,25 @@ describe("InteractiveMode goal mode integration", () => {
 	});
 
 	it("returns the completion report from the goal tool and exits goal mode before the next turn rebuild", async () => {
-		await harness.mode.handleGoalModeCommand("Ship the release");
+		await harness.mode.handleGoalModeCommand(
+			[
+				"## Objective",
+				"Ship the release.",
+				"## Success criteria",
+				"- The release is ready.",
+				"## Verification",
+				"- bun test release",
+			].join("\n"),
+		);
 		await harness.mode.handleGoalModeCommand("budget 50");
+		const lifecycle = harness.session.taskLifecycle;
+		await lifecycle.prepareOperation({
+			toolCallId: "verification-call",
+			toolName: "bash",
+			tier: "exec",
+			args: { command: "bun test release" },
+		});
+		await lifecycle.settleOperation("verification-call", false);
 		const appendCustomEntry = vi.spyOn(harness.session.sessionManager, "appendCustomEntry");
 		const goalTool = (await createTools(harness.toolSession, harness.session.getActiveToolNames())).find(
 			tool => tool.name === "goal",
@@ -481,7 +498,7 @@ describe("InteractiveMode goal mode integration", () => {
 		expect(appendCustomEntry).toHaveBeenCalledWith(
 			"goal-completed",
 			expect.objectContaining({
-				objective: "Ship the release",
+				objective: expect.stringContaining("Ship the release."),
 				tokenBudget: 50,
 				tokensUsed: 0,
 			}),

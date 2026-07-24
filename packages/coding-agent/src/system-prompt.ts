@@ -19,6 +19,7 @@ import { hasObsidian } from "./internal-urls/vault-protocol";
 import activeRepoContextTemplate from "./prompts/system/active-repo-context.md" with { type: "text" };
 import computerSafetyPrompt from "./prompts/system/computer-safety.md" with { type: "text" };
 import customSystemPromptTemplate from "./prompts/system/custom-system-prompt.md" with { type: "text" };
+import defaultLanguagePrompt from "./prompts/system/default-language.md" with { type: "text" };
 import defaultPersonality from "./prompts/system/personalities/default.md" with { type: "text" };
 import friendlyPersonality from "./prompts/system/personalities/friendly.md" with { type: "text" };
 import pragmaticPersonality from "./prompts/system/personalities/pragmatic.md" with { type: "text" };
@@ -512,8 +513,6 @@ export interface BuildSystemPromptOptions {
 	xdevTools?: Array<{ name: string; summary: string }>;
 	/** Full docs + JSON schema for every `xd://`-mounted tool, inlined into the protocol section so no discovery `read` is needed. */
 	xdevDocs?: string;
-	/** Whether Auto-QA grievance reporting is enabled; renders the `xd://report_issue` note. */
-	autoQaEnabled?: boolean;
 }
 
 /** Result of building provider-facing system prompt messages. */
@@ -560,7 +559,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		renderMermaid = true,
 		xdevTools = [],
 		xdevDocs = "",
-		autoQaEnabled = false,
 		activeRepoContext: providedActiveRepoContext,
 	} = options;
 	const inlineToolDescriptors = providedInlineToolDescriptors ?? false;
@@ -799,6 +797,7 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 
 	const environment = getEnvironmentInfo(cpuModel, gpu);
 	const data = {
+		defaultLanguagePolicy: defaultLanguagePrompt.trim(),
 		systemPromptCustomization: effectiveSystemPromptCustomization,
 		customPrompt: resolvedCustomPrompt,
 		appendPrompt: resolvedAppendPrompt ?? "",
@@ -836,7 +835,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		renderMermaid,
 		xdevTools,
 		xdevDocs,
-		autoQaEnabled,
 	};
 	const rendered = prompt.render(resolvedCustomPrompt ? customSystemPromptTemplate : systemPromptTemplate, data);
 	const systemPrompt = [rendered];

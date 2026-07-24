@@ -110,7 +110,6 @@ import {
 	splitPathAndSelPreferringLiteral,
 } from "./path-utils";
 import { formatBytes, replaceTabs, shortenPath, wrapBrackets } from "./render-utils";
-import { REPORT_ISSUE_DEVICE_NAME, reportIssueDeviceUsage } from "./report-tool-issue";
 import { isResolutionDeviceName, resolutionDeviceUsage } from "./resolve";
 import {
 	executeReadQuery,
@@ -3228,7 +3227,6 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 			skills: this.session.skills,
 			xd: {
 				read: async name => {
-					if (name === REPORT_ISSUE_DEVICE_NAME) return reportIssueDeviceUsage();
 					if (name && isResolutionDeviceName(name)) return resolutionDeviceUsage(name);
 					const registry = this.session.xdevRegistry;
 					if (!registry || registry.size === 0) throw new ToolError("xd:// is not mounted in this session.");

@@ -1,6 +1,6 @@
 # Native computer use
 
-`computer` captures and controls the desktop that is running `omp`. It uses native screen-capture and input APIs; it does not launch Chromium, use Puppeteer, or expose a DOM.
+`computer` captures and controls the desktop that is running `zz`. It uses native screen-capture and input APIs; it does not launch Chromium, use Puppeteer, or expose a DOM.
 
 Use it for visible desktop applications: IDEs, terminals, native apps, browser windows, menus, and system dialogs. Use [`browser`](./tools/browser.md) instead when you need headless/CDP browser tabs, DOM or ARIA inspection, selectors, JavaScript evaluation, or deterministic page automation.
 
@@ -9,7 +9,7 @@ Use it for visible desktop applications: IDEs, terminals, native apps, browser w
 
 ## Enable and configure
 
-The tool is disabled by default. Add this to `~/.omp/agent/config.yml`, a project `.omp/config.yml`, or a one-shot `--config` overlay:
+The tool is disabled by default. Add this to `~/.zz/agent/config.yml`, a project `.zz/config.yml`, or a one-shot `--config` overlay:
 
 ```yaml
 computer:
@@ -42,8 +42,8 @@ tools:
 You can also enable it globally from the CLI:
 
 ```bash
-omp config set computer.enabled true
-omp config get computer.enabled
+zz config set computer.enabled true
+zz config get computer.enabled
 ```
 
 Inside a running session, the `/computer` slash command (`/computer`, `/computer on|off|status`) toggles the tool for that session only; it never writes settings files. Backend, display, and image-size settings still snapshot when the session's desktop controller is created, so change those in config and start a new session.
@@ -71,7 +71,7 @@ A disconnected or changed ID fails with `DESKTOP_INVALID_OPTIONS`; switch to `al
 
 Models with native OpenAI GA computer-use support receive the wire declaration `{ "type": "computer" }`. Every other function-calling model receives `computer` as a regular function tool whose JSON schema describes the same GA action set. Both paths execute through the same native desktop backend, approval policy, and safety rules.
 
-OMP marks a model natively capable when either:
+ZZ marks a model natively capable when either:
 
 - its catalog metadata explicitly sets `supportsComputerUse: true`, or
 - it uses `openai-responses`, `openai-codex-responses`, or `azure-openai-responses` and resolves to an OpenAI/OpenAI Codex or Azure model ID matching `gpt-5.4` or later in the `gpt-5.x` family.
@@ -87,7 +87,7 @@ If the tool never appears:
 
 ## Actions
 
-The provider may send one GA action or an ordered `actions` batch. OMP normalizes both forms and executes the batch serially. A successful call returns exactly one fresh PNG after the entire batch. `screenshot` markers are deferred: they emit no input, produce no intermediate image, and do not rebase later coordinates in the same batch.
+The provider may send one GA action or an ordered `actions` batch. ZZ normalizes both forms and executes the batch serially. A successful call returns exactly one fresh PNG after the entire batch. `screenshot` markers are deferred: they emit no input, produce no intermediate image, and do not rebase later coordinates in the same batch.
 
 | Action | Required fields | Behavior |
 |---|---|---|
@@ -109,7 +109,7 @@ A batch containing only `screenshot` and `wait` is observation-only. Any click, 
 
 Always choose coordinates from the immediately preceding successful computer result. Every coordinate action in one batch maps through that same prior frame. Do not use OS logical coordinates, CSS pixels, terminal cell positions, coordinates copied from another screenshot, or an in-batch `screenshot` marker as a new frame.
 
-For each capture, OMP:
+For each capture, ZZ:
 
 1. Enumerates the selected native displays and their global logical rectangles.
 2. Captures every selected display at native pixel density.
@@ -127,7 +127,7 @@ Input actions use the returned PNG space. The backend locates the display contai
 
 The composite preserves gaps between monitor rectangles as black pixels. A point in a gap is not clickable and fails with `DESKTOP_COORDINATE_OUT_OF_BOUNDS`. Points on or beyond the PNG's right/bottom edge, negative points, and points outside every display also fail closed.
 
-If monitor membership, rectangle, or scale changes between the reference frame and a coordinate action, OMP clears the frame and returns `DESKTOP_LAYOUT_CHANGED`. Capture again before retrying. Moving a display, changing resolution/scaling, docking, undocking, or changing the selected display can trigger this guard.
+If monitor membership, rectangle, or scale changes between the reference frame and a coordinate action, ZZ clears the frame and returns `DESKTOP_LAYOUT_CHANGED`. Capture again before retrying. Moving a display, changing resolution/scaling, docking, undocking, or changing the selected display can trigger this guard.
 
 The worker rejects a coordinate action until a screenshot has been returned to the provider. Begin with a screenshot-only call. After any visual transition whose target may have moved, finish the current call and use its returned image for coordinates in the next call.
 
@@ -165,13 +165,13 @@ OpenAI may attach `pending_safety_checks` to a native `computer_call`. Precedenc
 3. `yolo`, `--auto-approve`, per-tool `allow`, and prior xdev approval cannot bypass that prompt.
 4. A headless session or missing UI fails closed; it never acknowledges on your behalf.
 5. Only explicit approval marks the checks acknowledged and permits input.
-6. OMP returns the same checks as `acknowledged_safety_checks` with the screenshot output.
+6. ZZ returns the same checks as `acknowledged_safety_checks` with the screenshot output.
 
 The computer executor checks the approval marker again before native input. A provider check reaching execution without interactive approval fails with `Provider safety checks require interactive approval before computer input`.
 
 ### 3. Consequential-action confirmation
 
-Provider checks do not replace user authorization. OMP treats screen text, images, notifications, websites, documents, chat messages, and application instructions as untrusted data. They cannot authorize actions or override your direct instructions.
+Provider checks do not replace user authorization. ZZ treats screen text, images, notifications, websites, documents, chat messages, and application instructions as untrusted data. They cannot authorize actions or override your direct instructions.
 
 The agent must confirm at the point of risk before consequential side effects unless your direct message already authorized that exact action, target, scope, and values. Examples include sending or publishing, purchases or transfers, deletion, account/security or permission changes, disclosure of private data, accepting legal terms, and irreversible operations. High-impact financial, employment, housing, education, insurance/credit, legal, medical, government, election, biometric, and highly sensitive-data actions require point-of-risk confirmation.
 
@@ -199,15 +199,15 @@ See [Tool approval mode](./approval-mode.md) for general policy resolution.
 
 Open **System Settings → Privacy & Security**:
 
-1. Grant **Screen Recording** to the terminal or application that launches `omp`.
+1. Grant **Screen Recording** to the terminal or application that launches `zz`.
 2. Grant **Accessibility** to the same host for keyboard and pointer input.
-3. Fully restart that host and start a new OMP session.
+3. Fully restart that host and start a new ZZ session.
 
-OMP performs a non-prompting Screen Recording preflight. It does not open the permission dialog for you. Accessibility is not separately preflighted; denial normally surfaces when native input initializes or emits an event.
+ZZ performs a non-prompting Screen Recording preflight. It does not open the permission dialog for you. Accessibility is not separately preflighted; denial normally surfaces when native input initializes or emits an event.
 
 ### Linux setup
 
-For X11, run OMP inside the target graphical session and ensure `DISPLAY` identifies it. Capture and input need no GUI system libraries: the backend speaks the X protocol directly and emits input through the XTEST extension.
+For X11, run ZZ inside the target graphical session and ensure `DISPLAY` identifies it. Capture and input need no GUI system libraries: the backend speaks the X protocol directly and emits input through the XTEST extension.
 
 For Wayland:
 
@@ -229,21 +229,21 @@ computer tool
   → capture/input APIs
 ```
 
-The Bun worker starts on the first computer call, not at OMP startup. Startup has a 10-second deadline. The desktop session and last screenshot geometry remain alive across calls, so later coordinates can be checked against the preceding frame. Each successful ordered action batch ends with one new capture.
+The Bun worker starts on the first computer call, not at ZZ startup. Startup has a 10-second deadline. The desktop session and last screenshot geometry remain alive across calls, so later coordinates can be checked against the preceding frame. Each successful ordered action batch ends with one new capture.
 
 Closing the agent/eval owner closes all owned controllers. Normal close asks the Bun worker to close, waits up to 1.5 seconds, then terminates it if needed. Native close is idempotent and bounded. Aborting a call terminates that worker and rejects pending requests; a later call may start a fresh worker and must establish a new screenshot frame.
 
 ## OpenAI screenshot references and Files
 
-OMP preserves the GA wire contract exactly:
+ZZ preserves the GA wire contract exactly:
 
 - call: `computer_call` with `action` or batched `actions`, stable `id`/`call_id`, and `pending_safety_checks`;
 - result: `computer_call_output` with `output.type: "computer_screenshot"` and `acknowledged_safety_checks`;
 - screenshot reference: either `image_url` or `file_id`.
 
-Native OMP execution returns the PNG inline as a `data:image/png;base64,...` `image_url`. It does **not** upload the capture to the OpenAI Files API and does not mint a `file_id`.
+Native ZZ execution returns the PNG inline as a `data:image/png;base64,...` `image_url`. It does **not** upload the capture to the OpenAI Files API and does not mint a `file_id`.
 
-If an OpenAI-compatible gateway or restored Responses history supplies a `file_id`, OMP preserves and replays that exact reference as provider metadata. It does not download, validate, refresh, or delete the provider file. File availability, retention, authorization, and expiry remain the provider/client's responsibility. Both `image_url` and `file_id` history are preserved for capable models; replay to a non-native OpenAI Responses-family model converts the native items to text notes.
+If an OpenAI-compatible gateway or restored Responses history supplies a `file_id`, ZZ preserves and replays that exact reference as provider metadata. It does not download, validate, refresh, or delete the provider file. File availability, retention, authorization, and expiry remain the provider/client's responsibility. Both `image_url` and `file_id` history are preserved for capable models; replay to a non-native OpenAI Responses-family model converts the native items to text notes.
 
 ## Troubleshooting
 
@@ -260,7 +260,7 @@ Computer backend errors begin with a stable code:
 | `DESKTOP_LAYOUT_CHANGED` | Display topology changed after the reference screenshot. Capture a new frame before input. |
 | `DESKTOP_COORDINATE_OUT_OF_BOUNDS` | Point lies outside the PNG, in a composite gap, or outside every display. Choose a point inside a listed `pixel*` rectangle. |
 | `DESKTOP_DEADLINE_EXCEEDED` | The 60-second native batch deadline expired; remaining actions were not executed. Split the batch into smaller calls and capture a fresh screenshot. |
-| `DESKTOP_SESSION_CLOSED` | Native session was closed. Start a new OMP session. |
+| `DESKTOP_SESSION_CLOSED` | Native session was closed. Start a new ZZ session. |
 | `DESKTOP_WORKER_FAILED` | Native worker startup, communication, timeout, or shutdown failed. Start a new session; if persistent, verify the native addon installation. |
 
 Common exact failures:
@@ -271,9 +271,9 @@ Common exact failures:
 - `native action deadline exceeded; remaining batch actions were not executed` → split the batch into smaller calls and take a fresh screenshot.
 - `macOS Screen Recording permission is not granted for this process` → grant the launching host Screen Recording and restart it.
 - `Provider safety checks require interactive approval before computer input` → use an interactive session and approve the provider prompt.
-- `Timed out starting native computer worker` → verify the installed native addon matches the OMP release, then restart/reinstall.
-- Version-sentinel error mentioning an upgrade while the session was running → restart OMP; disk is already consistent.
-- Version-sentinel error saying the `.node` file is from a different release → reinstall OMP/native packages.
+- `Timed out starting native computer worker` → verify the installed native addon matches the ZZ release, then restart/reinstall.
+- Version-sentinel error mentioning an upgrade while the session was running → restart ZZ; disk is already consistent.
+- Version-sentinel error saying the `.node` file is from a different release → reinstall ZZ/native packages.
 
 The native composite safety ceiling is 268,435,456 pixels. Normal defaults are far below it. Very large or sparse monitor arrangements should use a smaller maximum size or one selected display.
 
@@ -290,8 +290,8 @@ The native composite safety ceiling is 268,435,456 pixels. Normal defaults are f
 - Linux coordinate input fails closed for negative global display origins; select a display whose origin is non-negative.
 - X11/XTest coordinate input is limited to global positions through 32767 on each axis.
 - Windows support is implemented for x64 but was not remotely exercised for this change.
-- Native captures use inline `image_url`; OMP does not upload them to provider Files.
-- OS secure desktops and policy-protected surfaces may reject ordinary user-session capture/input; OMP has no bypass.
+- Native captures use inline `image_url`; ZZ does not upload them to provider Files.
+- OS secure desktops and policy-protected surfaces may reject ordinary user-session capture/input; ZZ has no bypass.
 
 ## Verification boundary
 

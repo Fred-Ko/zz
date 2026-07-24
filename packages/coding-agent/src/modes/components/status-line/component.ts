@@ -240,6 +240,18 @@ function hasGitBackedSegment(segments: readonly StatusLineSegmentId[]): boolean 
 	return hasGitSegment(segments) || hasPrSegment(segments);
 }
 
+/**
+ * Semantic rows used by the detailed layout. A configured segment keeps its
+ * left/right alignment, but moves into the row matching its purpose so a wide
+ * usage summary can no longer evict the model or workspace identity.
+ */
+const DETAILED_STATUS_ROWS: readonly (readonly StatusLineSegmentId[])[] = [
+	["pi", "model", "mode", "collab", "session_name", "hostname"],
+	["path", "git", "pr", "session", "subagents"],
+	["context_pct", "context_total", "token_in", "token_out", "token_total", "token_rate"],
+	["cache_read", "cache_write", "cache_hit", "cost", "usage", "time_spent", "time"],
+];
+
 // ═══════════════════════════════════════════════════════════════════════════
 // StatusLineComponent
 // ═══════════════════════════════════════════════════════════════════════════
@@ -340,6 +352,7 @@ export class StatusLineComponent implements Component {
 	constructor(private session: AgentSession) {
 		this.#settings = {
 			preset: settings.get("statusLine.preset"),
+			layout: settings.get("statusLine.layout"),
 			leftSegments: settings.get("statusLine.leftSegments"),
 			rightSegments: settings.get("statusLine.rightSegments"),
 			separator: settings.get("statusLine.separator"),
@@ -1306,7 +1319,7 @@ export class StatusLineComponent implements Component {
 		return theme.fg("statusLineSubagents", `${theme.icon.agents} ${this.#subagentCount} ${noun}`);
 	}
 
-	#buildStatusLine(width: number): string {
+	#buildStatusLines(width: number): string[] {
 		const effectiveSettings = this.#resolveSettings();
 		const includePath =
 			hasPathSegment(effectiveSettings.leftSegments) || hasPathSegment(effectiveSettings.rightSegments);
@@ -1326,6 +1339,46 @@ export class StatusLineComponent implements Component {
 			includeGit,
 			includePr,
 		);
+
+		if (effectiveSettings.layout !== "detailed") {
+			return [
+				this.#renderStatusRow(
+					width,
+					effectiveSettings,
+					ctx,
+					effectiveSettings.leftSegments,
+					effectiveSettings.rightSegments,
+					true,
+				),
+			];
+		}
+
+		const configuredSegments = [...effectiveSettings.leftSegments, ...effectiveSettings.rightSegments];
+		const assignedSegments = new Set(DETAILED_STATUS_ROWS.flat());
+		const remainingSegments = configuredSegments.filter(segment => !assignedSegments.has(segment));
+		const rowGroups =
+			remainingSegments.length > 0 ? [...DETAILED_STATUS_ROWS, remainingSegments] : DETAILED_STATUS_ROWS;
+		const lines: string[] = [];
+
+		for (let index = 0; index < rowGroups.length; index++) {
+			const group = new Set(rowGroups[index]);
+			const leftSegments = effectiveSettings.leftSegments.filter(segment => group.has(segment));
+			const rightSegments = effectiveSettings.rightSegments.filter(segment => group.has(segment));
+			const line = this.#renderStatusRow(width, effectiveSettings, ctx, leftSegments, rightSegments, index === 1);
+			if (line) lines.push(line);
+		}
+
+		return lines;
+	}
+
+	#renderStatusRow(
+		width: number,
+		effectiveSettings: EffectiveStatusLineSettings,
+		ctx: SegmentContext,
+		configuredLeftSegments: readonly StatusLineSegmentId[],
+		configuredRightSegments: readonly StatusLineSegmentId[],
+		includeDynamicBadges: boolean,
+	): string {
 		const separatorDef = getSeparator(effectiveSettings.separator ?? "powerline-thin", theme);
 
 		// `transparent` reuses the empty-string sentinel (`\x1b[49m`) so the bar
@@ -1344,7 +1397,7 @@ export class StatusLineComponent implements Component {
 		// Collect visible segment contents
 		const leftParts: string[] = [];
 		const leftSegIds: StatusLineSegmentId[] = [];
-		for (const segId of effectiveSettings.leftSegments) {
+		for (const segId of configuredLeftSegments) {
 			if (subagentBadge && segId === "subagents") continue;
 			const rendered = renderSegment(segId, ctx);
 			if (rendered.visible && rendered.content) {
@@ -1354,7 +1407,7 @@ export class StatusLineComponent implements Component {
 		}
 
 		const rightParts: string[] = [];
-		for (const segId of effectiveSettings.rightSegments) {
+		for (const segId of configuredRightSegments) {
 			if (subagentBadge && segId === "subagents") continue;
 			const rendered = renderSegment(segId, ctx);
 			if (rendered.visible && rendered.content) {
@@ -1363,10 +1416,10 @@ export class StatusLineComponent implements Component {
 		}
 
 		const runningBackgroundJobs = this.session.getAsyncJobSnapshot()?.running.length ?? 0;
-		if (runningBackgroundJobs > 0) {
+		if (includeDynamicBadges && runningBackgroundJobs > 0) {
 			rightParts.unshift(theme.fg("statusLineSubagents", `${theme.icon.job} ${runningBackgroundJobs}`));
 		}
-		if (subagentBadge) {
+		if (includeDynamicBadges && subagentBadge) {
 			rightParts.unshift(subagentBadge);
 		}
 		const topFillWidth = Math.max(0, width);
@@ -1489,17 +1542,35 @@ export class StatusLineComponent implements Component {
 		return leftGroup + gapFill + rightGroup;
 	}
 
-	getTopBorder(width: number): { content: string; width: number } {
-		let content = this.#buildStatusLine(width);
-		if (this.#focusedAgentId && content) {
-			// Dim the whole bar while focus-proxied. Group/cap terminators emit full
-			// `\x1b[0m` resets that would cancel faint mid-bar, so re-open it after each.
-			content = `\x1b[2m${content.replaceAll("\x1b[0m", "\x1b[0m\x1b[2m")}\x1b[22m`;
-		}
-		return {
+	#applyFocusDimming(content: string): string {
+		if (!this.#focusedAgentId || !content) return content;
+		// Dim the whole bar while focus-proxied. Group/cap terminators emit full
+		// `\x1b[0m` resets that would cancel faint mid-bar, so re-open it after each.
+		return `\x1b[2m${content.replaceAll("\x1b[0m", "\x1b[0m\x1b[2m")}\x1b[22m`;
+	}
+
+	getTopBorder(width: number): {
+		content: string;
+		width: number;
+		rows?: readonly { content: string; width: number }[];
+	} {
+		const lines = this.#buildStatusLines(width)
+			.filter(Boolean)
+			.map(line => this.#applyFocusDimming(line));
+		const content = lines[0] ?? "";
+		const rows = lines.slice(1).map(line => ({ content: line, width: visibleWidth(line) }));
+		const result: {
+			content: string;
+			width: number;
+			rows?: readonly { content: string; width: number }[];
+		} = {
 			content,
 			width: visibleWidth(content),
 		};
+		if (rows.length > 0) {
+			result.rows = rows;
+		}
+		return result;
 	}
 
 	render(width: number): readonly string[] {

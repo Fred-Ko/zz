@@ -49,6 +49,16 @@ describe("parseEnvFile", () => {
 			PI_FEATURE: "enabled",
 		});
 	});
+
+	it("mirrors canonical ZZ_ variables to compatibility names", () => {
+		const filePath = writeTempEnv("ZZ_FEATURE=enabled\nZZ_BAD=before\0after\n");
+
+		expect(parseEnvFile(filePath)).toEqual({
+			ZZ_FEATURE: "enabled",
+			OMP_FEATURE: "enabled",
+			PI_FEATURE: "enabled",
+		});
+	});
 });
 
 describe("filterProcessEnv", () => {

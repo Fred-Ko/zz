@@ -340,12 +340,24 @@ function resolveUserShellConfig(settings: Settings, baseConfig: ShellConfig): Sh
 	};
 }
 
+function isolateZshConfigHome(shell: string, env: Record<string, string>): Record<string, string> {
+	const home = env.HOME;
+	if (!shellBasename(shell).includes("zsh") || !home || home === Bun.env.HOME || env.ZDOTDIR !== undefined) {
+		return env;
+	}
+	// Native Shell merges sessionEnv over the host environment. If a caller
+	// supplies an isolated HOME but omits ZDOTDIR, an ambient host ZDOTDIR would
+	// otherwise make interactive zsh source the host's .zshrc instead.
+	return { ...env, ZDOTDIR: home };
+}
+
 export async function executeBash(command: string, options?: BashExecutorOptions): Promise<BashResult> {
 	const settings = await Settings.init();
 	const baseShellConfig = settings.getShellConfig();
 	const shellConfig =
 		options?.useUserShell === true ? resolveUserShellConfig(settings, baseShellConfig) : baseShellConfig;
-	const { shell, args, env: shellEnv, prefix } = shellConfig;
+	const { shell, args, env: configuredShellEnv, prefix } = shellConfig;
+	const shellEnv = isolateZshConfigHome(shell, configuredShellEnv);
 	const bashShell = isBashShell(shell);
 	const snapshotPath = bashShell ? await getOrCreateSnapshot(shell, shellEnv) : null;
 

@@ -4,10 +4,21 @@ import type { AgentSession } from "../../../session/agent-session";
 import { getThemeByName, setThemeInstance } from "../../theme/theme";
 import { StatusLineComponent } from "./component";
 
-function makeSessionWithLastMessage(lastMessage: unknown, prewalkArmed: boolean = false) {
+interface StatusTestModel {
+	contextWindow: number;
+	provider?: string;
+	id?: string;
+	name?: string;
+}
+
+function makeSessionWithLastMessage(
+	lastMessage: unknown,
+	prewalkArmed: boolean = false,
+	model: StatusTestModel = { contextWindow: 128000 },
+) {
 	return {
 		messages: lastMessage ? [lastMessage] : [],
-		model: { contextWindow: 128000 },
+		model,
 		contextUsageRevision: 0,
 		systemPrompt: [],
 		agent: { state: { tools: [] } },
@@ -15,7 +26,7 @@ function makeSessionWithLastMessage(lastMessage: unknown, prewalkArmed: boolean 
 		getContextUsage: () => ({ tokens: 42, contextWindow: 128000 }),
 		state: {
 			messages: lastMessage ? [lastMessage] : [],
-			model: { contextWindow: 128000 },
+			model,
 		},
 		sessionManager: {
 			getUsageStatistics: () => ({
@@ -80,5 +91,37 @@ describe("StatusLineComponent", () => {
 		// SGR codes might be included, so we check if the stripped content contains "Prewalk"
 		const stripped = border.content.replace(/\x1b\[[0-9;]*m/g, "");
 		expect(stripped).toContain("Prewalk");
+	});
+
+	it("keeps model, workspace, and context visible on separate detailed rows", () => {
+		const model = {
+			provider: "openai-codex",
+			id: "gpt-5.6-sol",
+			name: "GPT-5.6 Sol",
+			contextWindow: 128000,
+		};
+		const session = makeSessionWithLastMessage(null, false, model) as unknown as AgentSession;
+
+		const statusLine = new StatusLineComponent(session);
+		statusLine.updateSettings({
+			preset: "custom",
+			layout: "detailed",
+			leftSegments: ["mode", "path", "git", "context_pct", "context_total"],
+			rightSegments: ["model"],
+			separator: "none",
+			transparent: true,
+			segmentOptions: {
+				model: { showProvider: true, showThinkingLevel: true },
+			},
+		});
+
+		const border = statusLine.getTopBorder(100);
+		const rows = [border.content, ...(border.rows ?? []).map(row => row.content)];
+		const rendered = rows.map(row => row.replace(/\x1b\[[0-9;]*m/g, ""));
+
+		expect(rendered[0]).toContain("openai-codex/gpt-5.6-sol");
+		expect(rendered.some(row => row.includes("oh-my-pi"))).toBe(true);
+		expect(rendered.some(row => row.includes("128K"))).toBe(true);
+		expect(rows.length).toBeGreaterThanOrEqual(3);
 	});
 });

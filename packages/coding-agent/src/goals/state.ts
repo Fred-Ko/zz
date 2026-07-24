@@ -1,4 +1,5 @@
 import type { UsageStatistics } from "../session/session-entries";
+import type { TaskLifecycleSummary, TaskOperation } from "./task-lifecycle";
 
 export type GoalStatus = "active" | "paused" | "budget-limited" | "complete" | "dropped";
 
@@ -21,10 +22,12 @@ export interface GoalModeState {
 }
 
 export interface GoalToolDetails {
-	op: "create" | "get" | "complete" | "resume" | "drop";
+	op: "create" | "get" | "complete" | "resume" | "revise" | "recover" | "drop";
 	goal?: Goal | null;
 	remainingTokens?: number | null;
 	completionBudgetReport?: string | null;
+	lifecycle?: TaskLifecycleSummary | null;
+	operation?: TaskOperation;
 }
 
 export type GoalRuntimeEvent =
