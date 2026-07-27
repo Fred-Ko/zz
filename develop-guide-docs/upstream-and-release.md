@@ -28,9 +28,7 @@ git push fork main
 ## 2. 동기화 전
 
 ```sh
-git status --short --branch
-git fetch origin --prune --tags
-git log --oneline --decorate --graph --max-count=20 --all
+bash .agents/skills/upstream-sync-review/scripts/survey.sh
 ```
 
 확인할 것:
@@ -39,40 +37,40 @@ git log --oneline --decorate --graph --max-count=20 --all
 - staged 변경 유무
 - 현재 branch
 - origin과 fork URL
-- upstream이 건드린 파일과 로컬 변경의 교집합
+- 공통 merge-base 이후 upstream 변경과 ZZ 고유 commit 변경의 교집합
+- upstream 변경과 현재 dirty tracked 파일의 교집합
 
 사용자 변경을 임의로 버리지 않는다. `git reset --hard`, broad checkout, clean을 사용하지 않는다.
 
-## 3. 깨끗한 worktree
+## 3. 전용 integration worktree
 
-로컬 commit이 없고 fast-forward 가능한 경우:
-
-```sh
-git pull --ff-only origin main
-```
-
-로컬 commit이 있다면 merge/rebase 정책을 먼저 정한다. 공개된 포크 commit을 임의 rebase/force-push하지 않는다.
-
-## 4. dirty worktree
-
-일반 pull을 먼저 시도하면 Git이 겹치는 파일을 알려준다. 로컬 변경을 보존해 통합할 때:
+공개된 ZZ 이력은 rebase/force-push하지 않는다. 기본 통합은 로컬 `main`에서 별도 worktree를 만들고 upstream을 no-commit merge하는 방식이다.
 
 ```sh
-git pull --rebase --autostash origin main
+git rev-list --left-right --count fork/main...main
+git worktree add -b integration/upstream-v<version> .worktrees/upstream-v<version> main
+cd .worktrees/upstream-v<version>
+git merge --no-commit --no-ff origin/main
 ```
 
-주의:
+이 방식은 dirty `main`과 untracked 프로젝트를 보존하고, 검증 전 commit을 막으며, 최종 merge commit에 upstream parent를 남겨 다음 동기화의 diff를 줄인다. `fork/main`에만 commit이 있으면 원격 변경을 먼저 조사한다. 기존 integration branch/worktree는 임의 삭제하지 않는다.
 
-- autostash 적용 충돌 시 stash는 자동으로 남는다.
-- untracked 파일은 autostash 범위가 아닐 수 있다.
-- 충돌 해결 후 원래 staged/unstaged 상태도 복원해야 한다.
-- 자동 stash를 삭제하기 전 worktree에 모든 변경이 복원됐는지 검증한다.
+## 4. 충돌 해결과 검증
 
 충돌 파일:
 
 ```sh
 git diff --name-only --diff-filter=U
 git ls-files -u
+```
+
+통합 경계 검사:
+
+```sh
+bash .agents/skills/upstream-sync-review/scripts/verify.sh --pre-commit
+bun run check:ts
+env -u RUSTUP_TOOLCHAIN bun check
+ZZ_TEST_CONCURRENCY=4 bun run test:ts
 ```
 
 충돌 해결 원칙:
@@ -82,15 +80,17 @@ git ls-files -u
 - package version bump와 로컬 description 변경처럼 독립적인 변경은 함께 보존한다.
 - conflict marker가 없는지 확인한다.
 - 타입 검사와 관련 테스트를 다시 실행한다.
+- upstream Goal/Todo와 ZZW lifecycle, upstream memory와 ZZ Knowledge를 하나로 섞지 않는다.
+- build/worker/설치 경로가 바뀌면 `bun run build`, native build, `zz --smoke-test`를 추가한다.
 
 ## 5. Fork push
 
-push 전:
+통합 승인, commit 승인, push 승인은 별도다. 검증된 no-commit merge를 먼저 보고하고 commit 승인을 받는다.
 
 ```sh
-git diff --check
-git status --short
-git log -1 --format=fuller
+git commit -m "Merge upstream v<version> into ZZ"
+git show --no-patch --format='%H%n%P%n%s' HEAD
+bash .agents/skills/upstream-sync-review/scripts/verify.sh --post-commit
 ```
 
 제품 코드와 무관한 demo, local DB, 개인 설정, 작업 입력 문서는 제외한다. secret/token/private key가 새 diff에 추가되지 않았는지 확인한다.
@@ -98,7 +98,9 @@ git log -1 --format=fuller
 사용자가 commit/push를 요청했을 때만:
 
 ```sh
-git push fork main
+git fetch fork '+refs/heads/main:refs/remotes/fork/main'
+git merge-base --is-ancestor fork/main HEAD
+git push fork HEAD:main
 ```
 
 검증:
@@ -107,6 +109,8 @@ git push fork main
 git ls-remote fork refs/heads/main
 gh api repos/Fred-Ko/zz/commits/main --jq '{sha: .sha, message: .commit.message, html_url: .html_url}'
 ```
+
+기본 worktree의 local `main`은 tracked 변경이 없고 untracked 경로 충돌이 없을 때만 `git merge --ff-only <merge-commit>`으로 맞춘다. 통합 worktree와 branch는 자동 삭제하지 않는다.
 
 ## 6. Upstream 호환성
 
