@@ -208,6 +208,7 @@ export class EventController {
 				this.ctx.ui.resetDisplay();
 			},
 			goal_updated: async () => {},
+			zzworkflow_updated: async () => {},
 		} satisfies AgentSessionEventHandlers;
 	}
 

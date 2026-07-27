@@ -1,0 +1,4 @@
+interface:
+  display_name: "ZZW Verification"
+  short_description: "Validate current evidence and completion gates"
+  default_prompt: "Use $zzw-verification to validate the active ZZWorkflow task."

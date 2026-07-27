@@ -2,6 +2,38 @@
 
 ## [Unreleased]
 
+### Added
+
+- Added evolving ZZWorkflow Plan DAGs with rolling milestones and per-branch expansion authority envelopes, step and artifact lineage, structured version history, `/zzw history`, `/zzw diff`, `/zzw why`, and bundled plan-evolution, reconciliation, and verification skills.
+- Added ZZWorkflow (ZZW) as an opt-in controlled Goal protocol through `/zzw-goal`, `/zzw-guided-goal`, `/zzw`, and `zzw_*` model tools while preserving the original `/goal` and `/guided-goal` behavior. ZZW now stops automatic continuation while user Plan approval is pending.
+- Added the independent ZZ Knowledge layer for scoped Hindsight recall, evidence-gated retain, deliberate reflect and curation, replaceable context working sets, durable SQLite outbox/reviews, and explicitly refreshed mental models.
+- Added ZZ Knowledge V2 taxonomy and purpose-specific tag groups, versioned managed Hindsight bank profiles, document retain strategies, explicit conversational remember/recall/correct/forget routing, and request-level retain groups with user-controlled invalidation, restoration, and confirmed purge.
+- Added separate Global and per-repository Hindsight Banks with stable opaque IDs, human-readable dashboard names, deterministic scope routing, and `/knowledge banks` inspection.
+- Added a configurable `worktree` status-line segment that distinguishes the primary checkout from the active linked Git worktree.
+
+### Changed
+
+- Changed ZZWorkflow replanning to classify mismatches in `RECONCILING`, compute the affected dependency closure from observations and artifacts, preserve unaffected completed evidence, reject unchanged retry loops, and require renewed approval only for material Plan changes by default.
+- Changed goal-mode Todo state into a read-only projection of the ZZWorkflow Plan DAG, added user-only plan approval, dependency/tool/target gates, trusted workspace-bound validator evidence, failure-driven replanning, live repository-store rebinding, and visible Hindsight provider health.
+- Replaced the optional network workflow coordinator with always-on embedded ZZWorkflow SQLite registries isolated per repository at the compatibility path `~/.zz/agent/workflows/<repository-id>/workflow.db`, including transactional task events, same-machine workspace leases, heartbeats, recovery state, local Git checkpoints, and safe deferred migration from the legacy global database.
+- Changed Git branches from durable Knowledge scopes to immutable `branch-ref` provenance, while branch-only state remains in the ZZWorkflow Registry.
+
+### Fixed
+
+- Fixed routine compile, lint, test, and approved infrastructure-precondition failures repeatedly rewriting the ZZWorkflow Plan and asking for approval. They now continue in the active step as `implementation-feedback` or `missing-precondition`, while operation fingerprints include workspace pre-state to distinguish real fixes from unchanged retry loops.
+- Fixed failed operations immediately invalidating the entire ZZWorkflow Plan and every evidence item. Failures now block side effects while they are classified, repeated operation fingerprints cannot loop indefinitely, empty Plan patches cannot bypass retry policy, and schema v1 task snapshots migrate into the versioned lineage model.
+- Fixed `/zzw approve-plan` transitioning the Registry to `READY` without starting the next agent turn, especially after restart restored the Goal as paused. Approval now resumes a paused ZZWorkflow and deterministically submits the first dependency-ready continuation through the main input loop instead of depending on the optional delayed auto-continuation scheduler.
+- Fixed partial `zzw_patch_plan` updates erasing omitted Plan fields, which could approve a malformed DAG and repeatedly crash Todo rendering with `input.length` errors after `/zzw approve-plan`. Omitted fields now remain unchanged, approval validates required display fields, affected legacy snapshots are repaired from their preceding valid snapshot, and any remaining corrupt projection renders a recovery label instead of throwing.
+- Fixed ZZWorkflow Plan proposals repeatedly failing when human-readable success or verification prose differed from executable validator commands. Specification requirements now have stable `SC-*`/`V-*` IDs, Plan and evidence mappings use those IDs, and invalid proposals return all mapping issues in one structured result.
+- Fixed Hindsight recall and reflect requests sending mutually exclusive `tags` and `tag_groups`, which caused HTTP 422 responses.
+- Improved `/guided-goal` with structured recommended choices in the rich ask dialog, conversational question/answer transcript entries, visible response-generation state, and detailed model/workspace status that remains present while the dialog replaces the editor.
+- Kept accepted built-in slash commands and their local results visible in the current TUI transcript without adding them to the persisted conversation or model context; secret-bearing command arguments remain redacted.
+
+### Removed
+
+- Removed the separate `zz-workflowd` package and command, HTTP coordinator transport and outbox, cross-machine identity and checkpoint transport, and their retired settings.
+- Removed the complete upstream OMP Memory stack, including Mnemopi, local and Hindsight memory backends, autolearn, transcript auto-retain/auto-recall, legacy memory settings, commands, tools, prompts, internal URLs, and Mnemopi-only native vector exports.
+
 ## [17.1.2] - 2026-07-24
 
 ### Added

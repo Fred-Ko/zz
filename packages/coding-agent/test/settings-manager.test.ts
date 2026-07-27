@@ -659,60 +659,6 @@ describe("Settings", () => {
 			expect(settings.getEditVariantForModel("gpt-5.2")).toBe("apply_patch");
 		});
 
-		it("maps legacy hindsight.dynamicBankId=true onto hindsight.scoping=per-project", async () => {
-			await writeSettings({
-				hindsight: { dynamicBankId: true },
-			});
-
-			const settings = await Settings.init({ cwd: projectDir, agentDir });
-
-			expect(settings.get("hindsight.scoping")).toBe("per-project");
-		});
-
-		it("does not override an explicit hindsight.scoping when migrating", async () => {
-			await writeSettings({
-				hindsight: { dynamicBankId: true, scoping: "global" },
-			});
-
-			const settings = await Settings.init({ cwd: projectDir, agentDir });
-
-			expect(settings.get("hindsight.scoping")).toBe("global");
-		});
-
-		it("promotes legacy hindsight.agentName onto hindsight.bankId when bankId is unset", async () => {
-			await writeSettings({
-				hindsight: { agentName: "ada-cli" },
-			});
-
-			const settings = await Settings.init({ cwd: projectDir, agentDir });
-
-			expect(settings.get("hindsight.bankId")).toBe("ada-cli");
-		});
-
-		it("migrates the legacy mnemosyne memory backend to mnemopi", async () => {
-			await writeSettings({
-				memory: { backend: "mnemosyne" },
-				mnemosyne: { dbPath: "/tmp/old.db", scoping: "global" },
-			});
-
-			const settings = await Settings.init({ cwd: projectDir, agentDir });
-
-			expect(settings.get("memory.backend")).toBe("mnemopi");
-			expect(settings.get("mnemopi.dbPath")).toBe("/tmp/old.db");
-			expect(settings.get("mnemopi.scoping")).toBe("global");
-		});
-
-		it("does not clobber an explicit mnemopi block when the legacy mnemosyne block is also present", async () => {
-			await writeSettings({
-				mnemosyne: { dbPath: "/tmp/old.db" },
-				mnemopi: { dbPath: "/tmp/new.db" },
-			});
-
-			const settings = await Settings.init({ cwd: projectDir, agentDir });
-
-			expect(settings.get("mnemopi.dbPath")).toBe("/tmp/new.db");
-		});
-
 		it("migrates boolean task.eager/todo.eager true to always", async () => {
 			await writeSettings({
 				task: { eager: true },
@@ -858,7 +804,7 @@ describe("Settings", () => {
 			expect(settings.get("todo.remindersMax")).toBe(4);
 		});
 
-		it("drops every retired automatic-QA setting while preserving unrelated settings", async () => {
+		it("drops retired automatic-QA and shared-coordinator settings while migrating local ZZW settings", async () => {
 			await writeSettings({
 				dev: {
 					autoqa: { consent: "denied" },
@@ -870,9 +816,12 @@ describe("Settings", () => {
 				"dev.autoqaPush.endpoint": "https://qa.example.test",
 				workflow: {
 					autoqa: false,
+					coordinatorUrl: "http://127.0.0.1:8890",
 					degradedAllowExecution: true,
+					heartbeatIntervalSeconds: 7,
 				},
 				"workflow.autoqa": true,
+				"workflow.checkpointRemote": "agent-state",
 				todo: { reminders: { max: 1 } },
 			});
 
@@ -891,13 +840,16 @@ describe("Settings", () => {
 			expect(onDisk["dev.autoqa"]).toBeUndefined();
 			expect(onDisk["dev.autoqa.consent"]).toBeUndefined();
 			expect(onDisk["dev.autoqaPush.endpoint"]).toBeUndefined();
-			expect(onDisk.workflow).toEqual({ degradedAllowExecution: true });
+			expect(onDisk.workflow).toBeUndefined();
+			expect(onDisk.zzworkflow).toEqual({ heartbeatIntervalSeconds: 7 });
 			expect(onDisk["workflow.autoqa"]).toBeUndefined();
+			expect(onDisk["workflow.checkpointRemote"]).toBeUndefined();
 			expect(onDisk["todo.reminders.max"]).toBeUndefined();
 
 			const reloaded = await Settings.loadIsolated({ cwd: projectDir, agentDir });
 			expect(reloaded.get("todo.remindersMax")).toBe(1);
 			expect(reloaded.get("todo.reminders")).toBe(true);
+			expect(reloaded.get("zzworkflow.heartbeatIntervalSeconds")).toBe(7);
 		});
 
 		it("drops dead BM25-discovery keys and leaves tools.xdev at its default", async () => {

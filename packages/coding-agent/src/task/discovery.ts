@@ -1,10 +1,10 @@
 /**
  * Agent discovery from filesystem.
  *
- * Discovers agent definitions from OMP-native task-agent roots:
- *   - ~/.omp/agent/agents/*.md (user-level)
- *   - .omp/agents/*.md (project-level)
- *   - <ext>/agents/*.md for every OMP extension package wired through
+ * Discovers agent definitions from ZZ-native task-agent roots:
+ *   - ~/.zz/agent/agents/*.md (user-level)
+ *   - .zz/agents/*.md (project-level)
+ *   - <ext>/agents/*.md for every ZZ-compatible extension package wired through
  *     `listOmpExtensionRoots` (CLI `--extension` roots, `extensions:` in
  *     settings, and enabled npm/link plugins under `<plugins>/node_modules/`).
  *     Mirrors the same sub-discovery convention applied to `skills/`,
@@ -12,7 +12,7 @@
  *
  * Claude Code marketplace plugin agents are discovered separately via the
  * claude-plugins provider. Direct cross-harness roots such as .claude/agents
- * are intentionally skipped because their frontmatter schema is not the OMP
+ * are intentionally skipped because their frontmatter schema is not the ZZ
  * task-agent contract.
  *
  * Agent files use markdown with YAML frontmatter.
@@ -60,8 +60,8 @@ async function loadAgentsFromDir(dir: string, source: AgentSource): Promise<Agen
 
 /**
  * Discover agents from filesystem and merge with bundled agents.
- * Precedence (highest wins): project `.omp/agents`, user `.omp/agents`,
- * OMP extension-package agents in `listOmpExtensionRoots` source order
+ * Precedence (highest wins): project `.zz/agents`, user `.zz/agents`,
+ * ZZ-compatible extension-package agents in `listOmpExtensionRoots` source order
  * (CLI roots > project `extensions:` settings > user `extensions:` settings >
  * installed npm/link plugins), Claude marketplace plugin agents (project
  * scope before user), then bundled.
@@ -90,7 +90,7 @@ export async function discoverAgents(cwd: string, home: string = os.homedir()): 
 	const user = userDirs[0];
 	if (user) orderedDirs.push({ dir: user.path, source: "user" });
 
-	// OMP extension-package agents/ dirs. `listOmpExtensionRoots` returns roots in
+	// ZZ-compatible extension-package agents/ dirs. `listOmpExtensionRoots` returns roots in
 	// source-precedence order (CLI > project `extensions:` settings > user
 	// `extensions:` settings > installed npm/link plugins, with marketplace
 	// installs already excluded by realpath) — consume that order verbatim so the

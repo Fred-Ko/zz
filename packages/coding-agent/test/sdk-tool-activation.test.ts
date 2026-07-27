@@ -373,8 +373,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 				"providers.imageOrder": ["openai"],
 				"generate_image.enabled": true,
 				"speechgen.enabled": true,
-				"memory.backend": "hindsight",
-				"autolearn.enabled": true,
+				"knowledge.enabled": true,
 			});
 
 		const inheritedManager = {
@@ -401,10 +400,10 @@ describe("createAgentSession defaultInactive tool activation", () => {
 			for (const name of [
 				"generate_image",
 				"tts",
-				"recall",
-				"retain",
-				"reflect",
-				"learn",
+				"knowledge_recall",
+				"knowledge_retain",
+				"knowledge_reflect",
+				"knowledge_curate",
 				"manage_skill",
 				"default_active_tool",
 				"default_inactive_tool",
@@ -434,7 +433,7 @@ describe("createAgentSession defaultInactive tool activation", () => {
 		try {
 			const activeToolNames = normal.getActiveToolNames();
 			expect(activeToolNames).toEqual(
-				expect.arrayContaining(["read", "yield", "generate_image", "learn", "manage_skill", "write"]),
+				expect.arrayContaining(["read", "yield", "generate_image", "manage_skill", "write"]),
 			);
 			for (const name of ["tts", "default_active_tool", "sdk_custom_tool"]) {
 				expect(activeToolNames).not.toContain(name);
@@ -450,9 +449,10 @@ describe("createAgentSession defaultInactive tool activation", () => {
 					"tts",
 					"default_active_tool",
 					"sdk_custom_tool",
-					"recall",
-					"retain",
-					"reflect",
+					"knowledge_recall",
+					"knowledge_retain",
+					"knowledge_reflect",
+					"knowledge_curate",
 				]),
 			);
 		} finally {

@@ -242,10 +242,7 @@ describe("status line path segment", () => {
 });
 
 describe("status line path segment in a linked worktree", () => {
-	function worktreeContext(
-		worktree: { projectName: string; worktreeName: string } | null,
-		branch: string | null,
-	): SegmentContext {
+	function worktreeContext(worktree: SegmentContext["worktree"], branch: string | null): SegmentContext {
 		const ctx = createPathContext();
 		ctx.worktree = worktree;
 		ctx.git = { branch, status: null, pr: null };
@@ -253,7 +250,10 @@ describe("status line path segment in a linked worktree", () => {
 	}
 
 	it("collapses to the project name and drops the worktree dir when it equals the branch", () => {
-		const rendered = renderSegment("path", worktreeContext({ projectName: "pi", worktreeName: "xx" }, "xx"));
+		const rendered = renderSegment(
+			"path",
+			worktreeContext({ kind: "linked", projectName: "pi", worktreeName: "xx" }, "xx"),
+		);
 		const content = Bun.stripANSI(rendered.content);
 		expect(rendered.visible).toBe(true);
 		expect(content).toBe(`${theme.icon.worktree} pi`);
@@ -264,12 +264,18 @@ describe("status line path segment in a linked worktree", () => {
 	});
 
 	it("keeps the worktree dir when it diverges from the branch", () => {
-		const rendered = renderSegment("path", worktreeContext({ projectName: "pi", worktreeName: "wt-icon" }, "icon"));
+		const rendered = renderSegment(
+			"path",
+			worktreeContext({ kind: "linked", projectName: "pi", worktreeName: "wt-icon" }, "icon"),
+		);
 		expect(Bun.stripANSI(rendered.content)).toBe(`${theme.icon.worktree} pi/wt-icon`);
 	});
 
 	it("keeps the worktree dir when no branch is shown", () => {
-		const rendered = renderSegment("path", worktreeContext({ projectName: "pi", worktreeName: "xx" }, null));
+		const rendered = renderSegment(
+			"path",
+			worktreeContext({ kind: "linked", projectName: "pi", worktreeName: "xx" }, null),
+		);
 		expect(Bun.stripANSI(rendered.content)).toBe(`${theme.icon.worktree} pi/xx`);
 	});
 
@@ -277,7 +283,7 @@ describe("status line path segment in a linked worktree", () => {
 		const scratchDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-status-line-wt-noprefix-"));
 		try {
 			setProjectDir(scratchDir);
-			const ctx = worktreeContext({ projectName: "pi", worktreeName: "xx" }, "xx");
+			const ctx = worktreeContext({ kind: "linked", projectName: "pi", worktreeName: "xx" }, "xx");
 			ctx.options.path = { ...ctx.options.path, stripWorkPrefix: false };
 			const content = Bun.stripANSI(renderSegment("path", ctx).content);
 			expect(content).not.toContain(theme.icon.worktree);
@@ -289,11 +295,28 @@ describe("status line path segment in a linked worktree", () => {
 	});
 
 	it("clamps a long worktree label to maxLength so overflow shrink works", () => {
-		const ctx = worktreeContext({ projectName: "very-long-project-name", worktreeName: "feature" }, "other");
+		const ctx = worktreeContext(
+			{ kind: "linked", projectName: "very-long-project-name", worktreeName: "feature" },
+			"other",
+		);
 		ctx.options.path = { ...ctx.options.path, maxLength: 10 };
 		const label = Bun.stripANSI(renderSegment("path", ctx).content).slice(theme.icon.worktree.length + 1);
 		expect(label.length).toBeLessThanOrEqual(10);
 		expect(label.startsWith("…")).toBe(true);
 		expect(label.endsWith("feature")).toBe(true);
+	});
+});
+
+describe("status line worktree segment", () => {
+	it("labels the primary checkout", () => {
+		const ctx = createPathContext();
+		ctx.worktree = { kind: "primary", projectName: "zz", worktreeName: "zz" };
+		expect(Bun.stripANSI(renderSegment("worktree", ctx).content)).toBe(`${theme.icon.worktree} primary`);
+	});
+
+	it("labels a linked checkout by worktree directory", () => {
+		const ctx = createPathContext();
+		ctx.worktree = { kind: "linked", projectName: "zz", worktreeName: "feature-knowledge" };
+		expect(Bun.stripANSI(renderSegment("worktree", ctx).content)).toBe(`${theme.icon.worktree} feature-knowledge`);
 	});
 });

@@ -9,7 +9,7 @@ import type { AgentMessage } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
 import { logger, sanitizeText } from "@oh-my-pi/pi-utils";
 import { resolvePlanModelTransition } from "../plan-mode/model-transition";
-import { type AgentSession, type AgentSessionEvent, SHUTDOWN_CONSOLIDATE_BUDGET_MS } from "../session/agent-session";
+import type { AgentSession, AgentSessionEvent } from "../session/agent-session";
 import { isSilentAbort } from "../session/messages";
 import { flushTelemetryExport } from "../telemetry-export";
 import { PROPOSE_DEVICE_NAME, writeDeviceDispatch } from "../tools/resolve";
@@ -223,7 +223,7 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 				// is idempotent, so the unreachable call below is a harmless no-op.
 				await session.waitForAdvisorCatchup(PRINT_MODE_ERROR_ADVISOR_DRAIN_TIMEOUT_MS);
 				await flushTelemetryExport();
-				await session.dispose({ mnemopiConsolidateTimeoutMs: SHUTDOWN_CONSOLIDATE_BUDGET_MS });
+				await session.dispose();
 				const flushed = process.stderr.write(`${errorLine}\n`);
 				if (flushed) {
 					process.exit(1);
@@ -261,5 +261,5 @@ export async function runPrintMode(session: AgentSession, options: PrintModeOpti
 			else resolve();
 		});
 	});
-	await session.dispose({ mnemopiConsolidateTimeoutMs: SHUTDOWN_CONSOLIDATE_BUDGET_MS });
+	await session.dispose();
 }

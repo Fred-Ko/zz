@@ -62,8 +62,6 @@ export interface SessionHandoffHost {
 	syncAgentSessionId(): void;
 	prepareTaskLifecycleHandoff(): Promise<TaskLifecycleHandoff | undefined>;
 	resumeTaskLifecycleHandoff(handoff: TaskLifecycleHandoff): Promise<void>;
-	rekeyMemoryForCurrentSessionId(): void;
-	resetMemoryContextForNewTranscript(): Promise<void>;
 	clearPendingNextTurnMessages(): void;
 	resetTodoCycle(): void;
 	buildDisplaySessionContext(): SessionContext;
@@ -260,8 +258,6 @@ export class SessionHandoff {
 			if (taskLifecycleHandoff) {
 				await this.#host.resumeTaskLifecycleHandoff(taskLifecycleHandoff);
 			}
-			this.#host.rekeyMemoryForCurrentSessionId();
-			await this.#host.resetMemoryContextForNewTranscript();
 			this.#host.clearPendingNextTurnMessages();
 			this.#host.resetTodoCycle();
 

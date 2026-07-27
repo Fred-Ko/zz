@@ -209,7 +209,7 @@ export type SymbolKey =
 	| "tab.files"
 	| "tab.shell"
 	| "tab.tools"
-	| "tab.memory"
+	| "tab.knowledge"
 	| "tab.tasks"
 	| "tab.providers"
 	// Tool identity icons
@@ -229,7 +229,7 @@ export type SymbolKey =
 	| "tool.launch"
 	| "tool.task"
 	| "tool.todo"
-	| "tool.memory"
+	| "tool.knowledge"
 	| "tool.ask"
 	| "tool.resolve"
 	| "tool.review"
@@ -419,7 +419,7 @@ const UNICODE_SYMBOLS: SymbolMap = {
 	"tab.files": "📁",
 	"tab.shell": "💻",
 	"tab.tools": "🔧",
-	"tab.memory": "🧠",
+	"tab.knowledge": "🧠",
 	"tab.tasks": "📦",
 	"tab.providers": "🌐",
 	// Tool identity icons (per-tool signature glyph on the success header)
@@ -439,7 +439,7 @@ const UNICODE_SYMBOLS: SymbolMap = {
 	"tool.launch": "🚀",
 	"tool.task": "⇶",
 	"tool.todo": "☑",
-	"tool.memory": "🧠",
+	"tool.knowledge": "🧠",
 	"tool.ask": "?",
 	"tool.resolve": "✓",
 	"tool.review": "◉",
@@ -730,7 +730,7 @@ const NERD_SYMBOLS: SymbolMap = {
 	"tab.files": "󰈔",
 	"tab.shell": "󰆍",
 	"tab.tools": "󰠭",
-	"tab.memory": "󰧑",
+	"tab.knowledge": "󰧑",
 	"tab.tasks": "󰐱",
 	"tab.providers": "󰖟",
 	// Tool identity icons (per-tool signature glyph on the success header)
@@ -750,7 +750,7 @@ const NERD_SYMBOLS: SymbolMap = {
 	"tool.launch": "\uF135",
 	"tool.task": "\uf4a0",
 	"tool.todo": "\uEAB3",
-	"tool.memory": "\uEACE",
+	"tool.knowledge": "\uEACE",
 	"tool.ask": "\uEAC7",
 	"tool.resolve": "\uEBB1",
 	"tool.review": "\uEA70",
@@ -936,7 +936,7 @@ const ASCII_SYMBOLS: SymbolMap = {
 	"tab.files": "[F]",
 	"tab.shell": "[S]",
 	"tab.tools": "[T]",
-	"tab.memory": "[Y]",
+	"tab.knowledge": "[Y]",
 	"tab.tasks": "[K]",
 	"tab.providers": "[P]",
 	// Tool identity icons (per-tool signature glyph on the success header)
@@ -956,7 +956,7 @@ const ASCII_SYMBOLS: SymbolMap = {
 	"tool.launch": "run",
 	"tool.task": ">>>",
 	"tool.todo": "[x]",
-	"tool.memory": "mem",
+	"tool.knowledge": "know",
 	"tool.ask": "[?]",
 	"tool.resolve": "[v]",
 	"tool.review": "rev",

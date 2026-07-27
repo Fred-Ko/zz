@@ -127,6 +127,14 @@ async function createInteractiveGoalHarness(): Promise<{
 	};
 }
 
+async function submitGuidedGoalAnswer(mode: InteractiveMode, answer: string): Promise<void> {
+	for (let attempt = 0; attempt < 1_000; attempt++) {
+		if (mode.submitGuidedGoalInput(answer)) return;
+		await Bun.sleep(1);
+	}
+	throw new Error("Timed out waiting for guided goal input");
+}
+
 describe("guided goal setup", () => {
 	beforeAll(() => {
 		initTheme();
@@ -257,6 +265,133 @@ describe("guided goal setup", () => {
 		expect(result).toEqual({ kind: "question", question: "What is done?", objective: "Ship the feature." });
 	});
 
+	it("returns structured choices for the rich guided-goal question dialog", async () => {
+		spyOn(core, "instrumentedCompleteSimple").mockResolvedValue(
+			mockResponse({
+				kind: "question",
+				header: "저장 위치",
+				question: "프로젝트를 어디에 만들까요?",
+				options: [
+					{ label: "현재 폴더", description: "현재 작업 디렉터리에 생성합니다." },
+					{ label: "새 하위 폴더", description: "별도 하위 디렉터리에 생성합니다.", preview: "demo/" },
+				],
+				recommended: 1,
+				multi: false,
+				objective: "NestJS MSA 예제를 구성한다.",
+			}) as never,
+		);
+
+		const result = await runGuidedGoalTurn(createSession(), { messages: [{ role: "user", content: "Ship it" }] });
+
+		expect(result).toEqual({
+			kind: "question",
+			header: "저장 위치",
+			question: "프로젝트를 어디에 만들까요?",
+			options: [
+				{ label: "현재 폴더", description: "현재 작업 디렉터리에 생성합니다." },
+				{ label: "새 하위 폴더", description: "별도 하위 디렉터리에 생성합니다.", preview: "demo/" },
+			],
+			recommended: 1,
+			multi: false,
+			objective: "NestJS MSA 예제를 구성한다.",
+		});
+	});
+
+	it("uses the rich ask dialog and records only the answered exchange in the transcript", async () => {
+		const harness = await createInteractiveGoalHarness();
+		try {
+			const model = harness.session.model;
+			if (!model) throw new Error("expected session model");
+			spyOn(harness.session, "resolveRoleModelWithThinking").mockReturnValue({
+				model,
+				explicitThinkingLevel: false,
+			} as never);
+			spyOn(harness.modelRegistry, "getApiKey").mockResolvedValue("test-key");
+			const complete = spyOn(core, "instrumentedCompleteSimple");
+			complete
+				.mockResolvedValueOnce(
+					mockResponse({
+						kind: "question",
+						header: "저장 위치",
+						question: "프로젝트를 어디에 만들까요?",
+						options: [
+							{ label: "현재 폴더", description: "현재 작업 디렉터리에 생성합니다." },
+							{ label: "새 하위 폴더", description: "demo 하위에 생성합니다." },
+						],
+						recommended: 1,
+						objective: "NestJS MSA 예제를 구성한다.",
+					}) as never,
+				)
+				.mockResolvedValueOnce(
+					mockResponse({ kind: "ready", objective: "demo에 NestJS MSA 예제를 구성한다." }) as never,
+				);
+			const askDialog = vi.fn(async () => ({
+				kind: "submit" as const,
+				results: [
+					{
+						id: "guided-goal-1",
+						question: "프로젝트를 어디에 만들까요?",
+						options: ["현재 폴더", "새 하위 폴더"],
+						multi: false,
+						selectedOptions: ["새 하위 폴더"],
+					},
+				],
+			}));
+			vi.spyOn(harness.mode, "getToolUIContext").mockReturnValue({ askDialog } as never);
+
+			const interview = harness.mode.handleGuidedGoalCommand("NestJS MSA 예제를 만들어줘");
+			await submitGuidedGoalAnswer(harness.mode, "demo에 NestJS MSA 예제를 구성한다.");
+			await interview;
+
+			expect(askDialog).toHaveBeenCalledWith([
+				{
+					id: "guided-goal-1",
+					question: "프로젝트를 어디에 만들까요?",
+					header: "1/6 · 저장 위치",
+					options: [
+						{ label: "현재 폴더", description: "현재 작업 디렉터리에 생성합니다." },
+						{ label: "새 하위 폴더", description: "demo 하위에 생성합니다." },
+					],
+					recommended: 1,
+				},
+			]);
+			const transcript = harness.mode.chatContainer.render(120).join("\n");
+			expect(transcript).toContain("프로젝트를 어디에 만들까요?");
+			expect(transcript).toContain("새 하위 폴더");
+			expect(transcript).toContain("demo 하위에 생성합니다.");
+			expect(harness.session.getGoalModeState()?.goal.objective).toBe("demo에 NestJS MSA 예제를 구성한다.");
+			expect(harness.session.getGoalModeState()?.controller).toBe("goal");
+			expect(harness.session.taskLifecycle.state).toBeUndefined();
+		} finally {
+			await harness.cleanup();
+		}
+	});
+
+	it("starts ZZWorkflow only through the dedicated guided command", async () => {
+		const harness = await createInteractiveGoalHarness();
+		try {
+			const model = harness.session.model;
+			if (!model) throw new Error("expected session model");
+			spyOn(harness.session, "resolveRoleModelWithThinking").mockReturnValue({
+				model,
+				explicitThinkingLevel: false,
+			} as never);
+			spyOn(harness.modelRegistry, "getApiKey").mockResolvedValue("test-key");
+			spyOn(core, "instrumentedCompleteSimple").mockResolvedValue(
+				mockResponse({ kind: "ready", objective: "승인된 Plan DAG로 작업한다." }) as never,
+			);
+
+			const interview = harness.mode.handleZZWorkflowGuidedGoalCommand("제어형 작업을 시작해줘");
+			await submitGuidedGoalAnswer(harness.mode, "승인된 Plan DAG로 작업한다.");
+			await interview;
+
+			expect(harness.session.getGoalModeState()?.controller).toBe("zzworkflow");
+			expect(harness.session.taskLifecycle.state?.phase).toBe("AWAITING_USER");
+		} finally {
+			await harness.cleanup();
+		}
+	});
+
 	it("obfuscates secrets in the transcript before the request and deobfuscates the echoed objective", async () => {
 		const obfuscator = {
 			hasSecrets: () => true,
@@ -313,30 +448,30 @@ describe("guided goal setup", () => {
 				.mockResolvedValueOnce(mockResponse({ kind: "question", question: "Timeline?" }) as never)
 				.mockResolvedValueOnce(mockResponse({ kind: "question", question: "Risk?" }) as never)
 				.mockResolvedValueOnce(mockResponse({ kind: "question", question: "Anything else?" }) as never);
-			const editor = vi
-				.spyOn(harness.mode, "showHookEditor")
-				.mockResolvedValueOnce("answer 1")
-				.mockResolvedValueOnce("answer 2")
-				.mockResolvedValueOnce("answer 3")
-				.mockResolvedValueOnce("answer 4")
-				.mockResolvedValueOnce("answer 5")
-				.mockResolvedValueOnce("answer 6")
-				.mockResolvedValueOnce("Confirmed objective.");
+			const editor = vi.spyOn(harness.mode, "showHookEditor");
+			const workingMessage = vi.spyOn(harness.mode, "setWorkingMessage");
 			const warning = vi.spyOn(harness.mode, "showWarning");
 
-			await harness.mode.handleGuidedGoalCommand("Initial goal");
+			const interview = harness.mode.handleGuidedGoalCommand("Initial goal");
+			await submitGuidedGoalAnswer(harness.mode, "answer 1");
+			await submitGuidedGoalAnswer(harness.mode, "answer 2");
+			await submitGuidedGoalAnswer(harness.mode, "answer 3");
+			await submitGuidedGoalAnswer(harness.mode, "answer 4");
+			await submitGuidedGoalAnswer(harness.mode, "answer 5");
+			await submitGuidedGoalAnswer(harness.mode, "answer 6");
+			await submitGuidedGoalAnswer(harness.mode, "Confirmed objective.");
+			await interview;
 
-			expect(editor).toHaveBeenLastCalledWith(
-				"Review guided goal",
-				"Draft two is the latest usable objective.",
-				undefined,
-				{
-					promptStyle: true,
-				},
-			);
+			expect(editor).not.toHaveBeenCalled();
+			expect(harness.mode.ensureLoadingAnimation).toHaveBeenCalledTimes(6);
+			expect(workingMessage).toHaveBeenCalledWith("목표 인터뷰 응답을 생성하는 중…");
+			const transcript = harness.mode.chatContainer.render(120).join("\n");
+			expect(transcript).toContain("Who is the user?");
+			expect(transcript).toContain("answer 1");
+			expect(transcript).toContain("Draft two is the latest usable objective.");
 			expect(harness.session.getGoalModeState()?.goal.objective).toBe("Confirmed objective.");
 			expect(warning).not.toHaveBeenCalledWith(
-				"Guided goal setup needs more detail. Run /guided-goal again with a narrower objective.",
+				"목표를 확정하려면 정보가 더 필요합니다. 범위를 좁혀 /guided-goal을 다시 실행하세요.",
 			);
 		} finally {
 			await harness.cleanup();

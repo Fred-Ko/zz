@@ -135,13 +135,12 @@ import type { HookCommandContext } from "../extensibility/hooks/types";
 import type { Skill, SkillWarning } from "../extensibility/skills";
 import { expandSlashCommand, type FileSlashCommand } from "../extensibility/slash-commands";
 import { GoalRuntime } from "../goals/runtime";
-import type { GoalModeState } from "../goals/state";
-import { TaskLifecycleRuntime } from "../goals/task-lifecycle";
-import type { HindsightSessionState } from "../hindsight/state";
+import { type GoalModeState, isZZWorkflowGoalState } from "../goals/state";
+import { projectTaskPlanPhases, TaskLifecycleRuntime, type TaskLifecycleState } from "../goals/task-lifecycle";
 import { type LocalProtocolOptions, resolveLocalUrlToPath } from "../internal-urls";
 import type { IrcMessage } from "../irc/bus";
-import { shutdownMnemopiEmbedClient } from "../mnemopi/embed-client";
-import { getMnemopiSessionState, type MnemopiSessionState, setMnemopiSessionState } from "../mnemopi/state";
+import type { KnowledgeRuntime } from "../knowledge";
+import { renderExplicitKnowledgeNotice } from "../knowledge/conversation-intent";
 import { containsOrchestrate, ORCHESTRATE_NOTICE } from "../modes/orchestrate";
 import { theme } from "../modes/theme/theme";
 import { parseTurnBudget } from "../modes/turn-budget";
@@ -202,7 +201,7 @@ import { normalizeModelContextImages } from "../utils/image-loading";
 import { generateSessionTitle } from "../utils/title-generator";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
-import { WorkflowIntegration } from "../workflow/integration";
+import { ZZWorkflowIntegration } from "../workflow/integration";
 import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events";
 import type {
 	AgentSessionConfig,
@@ -306,7 +305,6 @@ import {
 	type SessionMaintenanceHost,
 } from "./session-maintenance";
 import { cleanupEmptyMoveSession, type SessionManager } from "./session-manager";
-import { SessionMemory, type SessionMemoryHost } from "./session-memory";
 import { SessionProviderBoundary, type SessionProviderBoundaryHost } from "./session-provider-boundary";
 import { SessionStatsTracker, type SessionStatsTrackerHost } from "./session-stats";
 import { SessionTools, type SessionToolsHost } from "./session-tools";
@@ -484,7 +482,7 @@ export class AgentSession {
 	#goalModeState: GoalModeState | undefined;
 	#goalRuntime: GoalRuntime;
 	readonly #taskLifecycle: TaskLifecycleRuntime;
-	readonly #workflowIntegration: WorkflowIntegration;
+	readonly #zzWorkflowIntegration: ZZWorkflowIntegration;
 	readonly #advisors: SessionAdvisors;
 	#goalTurnCounter = 0;
 	#planReferenceSent = false;
@@ -540,8 +538,6 @@ export class AgentSession {
 	#providerSessionId: string | undefined;
 	#freshProviderSessionId: string | undefined;
 	#inheritedProviderPromptCacheKey: string | undefined;
-	#autolearnCaptureAbortController: AbortController | undefined;
-	#autolearnCaptureTask: Promise<void> | undefined;
 	#isDisposed = false;
 	// Extension system
 	#extensionRunner: ExtensionRunner | undefined = undefined;
@@ -623,8 +619,6 @@ export class AgentSession {
 	#yieldTerminationPending = false;
 	#synchronouslyTerminatedYieldToolCallIds = new Set<string>();
 	#providerSessionState = new Map<string, ProviderSessionState>();
-	#hindsightSessionState: HindsightSessionState | undefined = undefined;
-	readonly #memory: SessionMemory;
 	readonly rawSseDebugBuffer: RawSseDebugBuffer;
 
 	#resetPromptMaintenanceState(): void {
@@ -1009,28 +1003,6 @@ export class AgentSession {
 			sessionId: () => this.sessionId,
 		};
 		this.#stats = new SessionStatsTracker(statsHost);
-		const memoryHost: SessionMemoryHost = {
-			agent: this.agent,
-			settings: this.settings,
-			modelRegistry: this.#modelRegistry,
-			isDisposed: () => this.#isDisposed,
-			memoryBackendSession: () => this,
-			getHindsightSessionState: () => this.getHindsightSessionState(),
-			setHindsightSessionState: state => this.setHindsightSessionState(state),
-			getMnemopiSessionState: () => this.getMnemopiSessionState(),
-			takeMnemopiSessionState: () => setMnemopiSessionState(this, undefined),
-			setBaseSystemPrompt: prompt => {
-				this.#tools.setBaseSystemPrompt(prompt);
-				this.agent.setSystemPrompt(prompt);
-			},
-			refreshBaseSystemPrompt: () => this.#tools.refreshBaseSystemPrompt(),
-			replaceMemoryTools: tools => this.#tools.replaceMemoryTools(tools),
-		};
-		this.#memory = new SessionMemory(memoryHost, {
-			memoryAgentDir: config.memoryAgentDir,
-			memoryTaskDepth: config.memoryTaskDepth,
-			createMemoryTools: config.createMemoryTools,
-		});
 		// Resolve the wire service-tier per request so the Fireworks Priority
 		// toggle scopes priority to Fireworks alone, without mutating the shared
 		// session `serviceTier` that drives `/fast` and OpenAI/Anthropic priority.
@@ -1124,10 +1096,7 @@ export class AgentSession {
 			queuedMessageCount: () => this.queuedMessageCount,
 			planModeEnabled: () => this.#planModeState?.enabled === true,
 			model: () => this.model,
-			memoryBackendSession: () => this,
 			clearInheritedProviderPromptCacheKey: () => this.#clearInheritedProviderPromptCacheKey(),
-			clearMemoryPromotionSnapshot: () => this.#memory.clearPromotionSnapshot(),
-			captureMemoryPromotionSnapshot: prompt => this.#memory.capturePromotionSnapshot(prompt),
 			emitNotice: (level, message, source) => this.emitNotice(level, message, source),
 			notifyCommandMetadataChanged: () => this.#notifyCommandMetadataChanged(),
 			localProtocolOptions: () => this.#localProtocolOptions(),
@@ -1225,8 +1194,9 @@ export class AgentSession {
 			this.#streamingEditGuard.maybeAbort(event);
 			this.#loopGuards.onAssistantEvent(message, assistantMessageEvent);
 		});
-		this.#workflowIntegration = new WorkflowIntegration({
+		this.#zzWorkflowIntegration = new ZZWorkflowIntegration({
 			settings: this.settings,
+			knowledgeEnabled: config.knowledgeEnabled ?? this.settings.get("knowledge.enabled"),
 			getCwd: () => this.sessionManager.getCwd(),
 			getSessionId: () => this.sessionManager.getSessionId(),
 			redact: content => this.#obfuscator?.obfuscate(content) ?? content,
@@ -1238,27 +1208,32 @@ export class AgentSession {
 			appendCustomEntry: (customType, data) => this.sessionManager.appendCustomEntry(customType, data),
 			ensureOnDisk: () => this.sessionManager.ensureOnDisk(),
 			flush: () => this.sessionManager.flush(),
-			syncSharedState: (state, reason) => this.#workflowIntegration.syncState(state, reason),
-			syncSharedOperation: (state, operation, reason) =>
-				this.#workflowIntegration.syncOperation(state, operation, reason),
-			assertMutationLease: state => this.#workflowIntegration.assertMutationLease(state),
-			recallTaskMemory: (state, stage) => this.#workflowIntegration.recall(state, stage),
-			retainTaskMemory: async (memory, state) => {
+			syncZZWorkflowState: (state, reason) => this.#zzWorkflowIntegration.syncState(state, reason),
+			syncZZWorkflowOperation: (state, operation, reason) =>
+				this.#zzWorkflowIntegration.syncOperation(state, operation, reason),
+			assertMutationLease: state => this.#zzWorkflowIntegration.assertMutationLease(state),
+			recallTaskKnowledge: (state, stage) => this.#zzWorkflowIntegration.recall(state, stage),
+			requestTaskKnowledgeReview: async state => {
 				try {
-					if (this.settings.get("hindsight.integrationMode") === "workflow-managed") {
-						await this.#workflowIntegration.retainTaskMemory(memory, state);
-					} else {
-						this.#hindsightSessionState?.enqueueRetain(memory.content, memory.context);
-					}
+					await this.#zzWorkflowIntegration.requestTaskKnowledgeReview(state);
 				} catch (error) {
-					logger.warn("Failed to queue completed task memory", { error: String(error) });
+					logger.warn("Failed to create completed task knowledge review", { error: String(error) });
 				}
 			},
+			publishPlanProjection: state => this.#publishWorkflowPlanProjection(state),
+			planPatchApprovalMode: () => this.settings.get("zzworkflow.planPatchApproval"),
 		});
 		const configuredBeforeToolCall = this.agent.beforeToolCall;
 		this.agent.beforeToolCall = async (ctx, signal) => {
 			const configuredResult = await configuredBeforeToolCall?.(ctx, signal);
-			if (configuredResult?.block || ctx.toolCall.name === "goal") return configuredResult;
+			if (
+				configuredResult?.block ||
+				ctx.toolCall.name === "goal" ||
+				ctx.toolCall.name.startsWith("zzw_") ||
+				!isZZWorkflowGoalState(this.#goalModeState)
+			) {
+				return configuredResult;
+			}
 			const tool =
 				ctx.context.tools?.find(candidate => candidate.name === ctx.toolCall.name) ??
 				ctx.context.tools?.find(candidate => candidate.customWireName === ctx.toolCall.name);
@@ -1299,7 +1274,10 @@ export class AgentSession {
 				if (mode === "none") {
 					this.sessionManager.appendModeChange("none");
 				} else if (state) {
-					this.sessionManager.appendModeChange(mode, { goal: state.goal });
+					this.sessionManager.appendModeChange(mode, {
+						goal: state.goal,
+						controller: state.controller ?? "goal",
+					});
 				}
 			},
 			sendHiddenMessage: async message => {
@@ -1393,7 +1371,6 @@ export class AgentSession {
 			goalModeState: () => this.#goalModeState,
 			planReferencePath: () => this.#planReferencePath,
 			nonMessageTokenSource: () => this,
-			memoryBackendSession: () => this,
 			emitSessionEvent: event => this.#emitSessionEvent(event),
 			emitNotice: (level, message, source) => this.emitNotice(level, message, source),
 			schedulePostPromptTask: (task, options) => this.#schedulePostPromptTask(task, options),
@@ -1468,10 +1445,6 @@ export class AgentSession {
 			syncAgentSessionId: () => this.#syncAgentSessionId(),
 			prepareTaskLifecycleHandoff: () => this.#taskLifecycle.prepareHandoff(),
 			resumeTaskLifecycleHandoff: handoff => this.#taskLifecycle.resumeHandoff(handoff),
-			rekeyMemoryForCurrentSessionId: () => {
-				this.#memory.rekeyForCurrentSessionId();
-			},
-			resetMemoryContextForNewTranscript: () => this.#memory.resetContextForNewTranscript(),
 			clearPendingNextTurnMessages: () => {
 				this.#pendingNextTurnMessages = [];
 				this.#scheduledHiddenNextTurnGeneration = undefined;
@@ -1610,6 +1583,23 @@ export class AgentSession {
 		this.#sessionSwitchReconciler = reconciler ?? undefined;
 	}
 
+	async getKnowledgeRuntime(): Promise<KnowledgeRuntime | undefined> {
+		return this.#zzWorkflowIntegration.getKnowledgeRuntime();
+	}
+
+	async buildKnowledgeContextMessage(): Promise<CustomMessage | undefined> {
+		const content = await this.#zzWorkflowIntegration.getSessionKnowledgeContext();
+		if (!content) return undefined;
+		return {
+			role: "custom",
+			customType: "zz-knowledge-working-set",
+			content,
+			display: false,
+			attribution: "agent",
+			timestamp: Date.now(),
+		};
+	}
+
 	/** Provider-scoped mutable state store for transport/session caches. */
 	get providerSessionState(): Map<string, ProviderSessionState> {
 		return this.#providerSessionState;
@@ -1618,20 +1608,6 @@ export class AgentSession {
 	/** Hint forwarded to provider calls that support websocket transport. */
 	get preferWebsockets(): boolean | undefined {
 		return this.#preferWebsockets;
-	}
-
-	getHindsightSessionState(): HindsightSessionState | undefined {
-		return this.#hindsightSessionState;
-	}
-
-	setHindsightSessionState(state: HindsightSessionState | undefined): HindsightSessionState | undefined {
-		const previous = this.#hindsightSessionState;
-		this.#hindsightSessionState = state;
-		return previous;
-	}
-
-	getMnemopiSessionState(): MnemopiSessionState | undefined {
-		return getMnemopiSessionState(this);
 	}
 
 	/** TTSR manager for time-traveling stream rules */
@@ -3054,11 +3030,15 @@ export class AgentSession {
 			this.agent.abort(TERMINAL_TOOL_RESULT_ABORT_REASON);
 		}
 		const result = this.#ttsr.afterToolCall(ctx);
-		await this.#taskLifecycle.settleOperation(ctx.toolCall.id, result?.isError ?? ctx.isError);
-		if (ctx.toolCall.name === "todo" && !(result?.isError ?? ctx.isError)) {
-			await this.#taskLifecycle.syncPlan(this.getTodoPhases());
+		if (isZZWorkflowGoalState(this.#goalModeState)) {
+			await this.#taskLifecycle.settleOperation(ctx.toolCall.id, result?.isError ?? ctx.isError, ctx.result);
 		}
 		return result;
+	}
+
+	async #publishWorkflowPlanProjection(state: TaskLifecycleState): Promise<void> {
+		this.setTodoPhases(projectTaskPlanPhases(state.plan));
+		await this.#emitSessionEvent({ type: "zzworkflow_updated" });
 	}
 
 	/** Find the last assistant message in agent state (including aborted ones) */
@@ -3398,44 +3378,6 @@ export class AgentSession {
 		);
 	}
 
-	/** Run one abortable auto-learn capture outside the primary agent loop. */
-	async runAutolearnCapture(capture: (signal: AbortSignal) => Promise<void>): Promise<void> {
-		if (this.#autolearnCaptureTask || this.#isDisposed) return;
-		const controller = new AbortController();
-		this.#autolearnCaptureAbortController = controller;
-		const task = (async () => {
-			try {
-				await capture(controller.signal);
-			} catch (error) {
-				if (!controller.signal.aborted) throw error;
-			} finally {
-				if (this.#autolearnCaptureAbortController === controller) {
-					this.#autolearnCaptureAbortController = undefined;
-				}
-			}
-		})();
-		this.#autolearnCaptureTask = task;
-		try {
-			await task;
-		} finally {
-			if (this.#autolearnCaptureTask === task) this.#autolearnCaptureTask = undefined;
-		}
-	}
-
-	#abortAutolearnCapture(): void {
-		this.#autolearnCaptureAbortController?.abort();
-	}
-
-	async #drainAutolearnCapture(): Promise<void> {
-		const task = this.#autolearnCaptureTask;
-		if (!task) return;
-		try {
-			await withTimeout(task, 3_000, "Timed out draining auto-learn capture during dispose");
-		} catch (error) {
-			logger.warn("Auto-learn capture did not settle during dispose", { error: String(error) });
-		}
-	}
-
 	/** True once dispose() has begun; deferred background work (e.g. the deferred
 	 *  MCP discovery task in sdk.ts) must not touch the session past this point. */
 	get isDisposed(): boolean {
@@ -3457,9 +3399,7 @@ export class AgentSession {
 	 */
 	beginDispose(): void {
 		this.#isDisposed = true;
-		this.#memory.cancelLocalMemoryStartup();
 		this.#titleGenerationAbortController.abort();
-		this.#abortAutolearnCapture();
 		this.#irc.flushPending();
 		this.yieldQueue.clear();
 		this.agent.setAsideMessageProvider(undefined);
@@ -3548,18 +3488,6 @@ export class AgentSession {
 		}
 	}
 
-	async #disposeMnemopi(
-		state: MnemopiSessionState | undefined,
-		consolidateTimeoutMs: number | undefined,
-	): Promise<void> {
-		try {
-			await state?.dispose({ timeoutMs: consolidateTimeoutMs });
-		} finally {
-			// Consolidation may embed final memories, so terminate its worker only afterward.
-			await shutdownMnemopiEmbedClient();
-		}
-	}
-
 	async #doDispose(options: AgentSessionDisposeOptions = {}): Promise<void> {
 		this.beginDispose();
 		this.#recordSessionExit(options.reason ?? "dispose");
@@ -3582,11 +3510,6 @@ export class AgentSession {
 		} catch (error) {
 			logger.warn("Post-prompt tasks still draining at dispose deadline", { error: String(error) });
 		}
-		await this.#drainAutolearnCapture();
-		await this.#memory.transition;
-
-		const hindsightState = this.getHindsightSessionState();
-		const mnemopiState = setMnemopiSessionState(this, undefined);
 		const advisorRecorderClosed = this.#advisors.recorderClosed();
 		const results = await Promise.allSettled([
 			this.#disposeOwnedAsyncJobs(),
@@ -3596,9 +3519,7 @@ export class AgentSession {
 			shutdownTinyTitleClient(),
 			this.#disconnectOwnedMcp(),
 			advisorRecorderClosed,
-			hindsightState?.flushRetainQueue() ?? Promise.resolve(),
-			this.#workflowIntegration.close(),
-			this.#disposeMnemopi(mnemopiState, options.mnemopiConsolidateTimeoutMs),
+			this.#zzWorkflowIntegration.close(),
 		]);
 		for (const result of results) {
 			if (result.status === "rejected") {
@@ -3614,8 +3535,6 @@ export class AgentSession {
 		// All teardown branches that can append session entries have settled.
 		await this.sessionManager.close();
 		this.#closeAllProviderSessions("dispose");
-		this.setHindsightSessionState(undefined);
-		hindsightState?.dispose();
 		this.#disconnectFromAgent();
 		if (this.#unsubscribeAppendOnly) {
 			this.#unsubscribeAppendOnly();
@@ -3651,7 +3570,6 @@ export class AgentSession {
 		this.#closeAllProviderSessions("fresh session");
 		this.#freshProviderSessionId = Bun.randomUUIDv7();
 		this.#syncAgentSessionId();
-		this.#memory.rekeyForCurrentSessionId();
 		this.agent.appendOnlyContext?.invalidateForModelChange();
 		return {
 			previousSessionId,
@@ -4043,33 +3961,9 @@ export class AgentSession {
 		return this.#tools.setComputerToolEnabled(enabled);
 	}
 
-	/** Cancels the local rollout-memory startup owned by this session. */
-	cancelLocalMemoryStartup(): void {
-		this.#memory.cancelLocalMemoryStartup();
-	}
-
-	/** Starts a new local rollout-memory generation and cancels its predecessor. */
-	beginLocalMemoryStartup(): AbortSignal {
-		return this.#memory.beginLocalMemoryStartup();
-	}
-
-	/** Releases the local startup slot if `signal` still owns it. */
-	endLocalMemoryStartup(signal: AbortSignal): void {
-		this.#memory.endLocalMemoryStartup(signal);
-	}
-
-	/** Applies the selected memory backend to runtime state, tools, and prompt. */
-	applyMemoryBackend(): Promise<void> {
-		return this.#memory.applyMemoryBackend();
-	}
-
 	/** Rebuilds the stable base prompt for the current tools and model. */
 	refreshBaseSystemPrompt(): Promise<void> {
 		return this.#tools.refreshBaseSystemPrompt();
-	}
-
-	#buildSystemPromptForAgentStart(promptText: string): Promise<string[]> {
-		return this.#tools.buildSystemPromptForAgentStart(promptText);
 	}
 
 	/** Replaces connected MCP tools and enables them immediately. */
@@ -4560,11 +4454,12 @@ export class AgentSession {
 	#buildGoalModeMessage(): CustomMessage | null {
 		const content = this.#goalRuntime.buildActivePrompt();
 		if (!content) return null;
-		const todoContext = this.#buildGoalTodoContext();
-		const taskLifecycleContext = this.#taskLifecycle.buildContext();
+		const zzWorkflowActive = isZZWorkflowGoalState(this.#goalModeState);
+		const todoContext = zzWorkflowActive ? this.#buildGoalTodoContext() : "";
+		const taskLifecycleContext = zzWorkflowActive ? this.#taskLifecycle.buildContext() : "";
 		return {
 			role: "custom",
-			customType: "goal-mode-context",
+			customType: zzWorkflowActive ? "zzworkflow-context" : "goal-mode-context",
 			content: prompt.render(goalModeContextPrompt, { goalContext: content, taskLifecycleContext, todoContext }),
 			display: false,
 			attribution: "agent",
@@ -4734,6 +4629,20 @@ export class AgentSession {
 		// user's message that steer this turn. User-authored prompts only — synthetic /
 		// agent-initiated turns never trigger them.
 		const keywordNotices = options?.synthetic ? [] : this.#createMagicKeywordNotices(expandedText);
+		const knowledgeIntentNotice =
+			!options?.synthetic && this.settings.get("knowledge.enabled")
+				? renderExplicitKnowledgeNotice(expandedText)
+				: undefined;
+		if (knowledgeIntentNotice) {
+			keywordNotices.push({
+				role: "custom",
+				customType: "explicit-knowledge-request",
+				content: knowledgeIntentNotice,
+				display: false,
+				attribution: "user",
+				timestamp: Date.now(),
+			});
+		}
 
 		// A user-initiated prompt (typed message or the `.`/`c` continue shortcut)
 		// re-enables advisor auto-resume that a prior user interrupt suppressed.
@@ -4995,10 +4904,8 @@ export class AgentSession {
 			// empty reasonless aborts once the session is disposing"). Only drop the
 			// prompt when disposal began during the backend-transition await, where
 			// resuming would start a turn on a torn-down session.
-			const disposingBeforeTransition = this.#isDisposed;
-			await this.#memory.transition;
-			if ((this.#isDisposed && !disposingBeforeTransition) || this.#promptGeneration !== generation) return;
-			const beforeAgentStartSystemPrompt = await this.#buildSystemPromptForAgentStart(expandedText);
+			if (this.#isDisposed || this.#promptGeneration !== generation) return;
+			const beforeAgentStartSystemPrompt = this.#tools.baseSystemPrompt;
 
 			// Emit before_agent_start extension event
 			if (this.#extensionRunner) {
@@ -5895,7 +5802,6 @@ export class AgentSession {
 		// auto-starting a fresh turn during cleanup.
 		this.#abortInProgress = true;
 		try {
-			this.#abortAutolearnCapture();
 			for (const controller of this.#usagePreflightAbortControllers) controller.abort();
 			this.abortRetry();
 			this.#promptGeneration++;
@@ -5918,7 +5824,6 @@ export class AgentSession {
 			this.agent.abort(options?.reason);
 			await postPromptDrain;
 			await this.agent.waitForIdle();
-			await this.#drainAutolearnCapture();
 			await this.#goalRuntime.onTaskAborted({ reason: options?.goalReason ?? "interrupted" });
 			// Clear prompt-in-flight state: waitForIdle resolves when the agent loop's finally
 			// block runs, but nested prompt setup/finalizers may still be unwinding. Without this,
@@ -6016,8 +5921,6 @@ export class AgentSession {
 		this.#freshProviderSessionId = undefined;
 		this.#clearInheritedProviderPromptCacheKey();
 		this.#syncAgentSessionId();
-		this.#memory.rekeyForCurrentSessionId();
-		await this.#memory.resetContextForNewTranscript();
 		this.#pendingNextTurnMessages = [];
 		this.#scheduledHiddenNextTurnGeneration = undefined;
 
@@ -6119,9 +6022,9 @@ export class AgentSession {
 		this.#adoptInheritedProviderPromptCacheKey();
 		this.#syncAgentSessionId();
 		this.#taskLifecycle.rehydrate();
-		await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
-		this.#memory.rekeyForCurrentSessionId();
-		await this.#memory.resetContextForNewTranscript();
+		await this.#taskLifecycle.startNewEpisode(
+			this.#goalModeState?.enabled === true && isZZWorkflowGoalState(this.#goalModeState),
+		);
 
 		// Emit session_switch event with reason "fork" to hooks
 		if (this.#extensionRunner) {
@@ -6139,7 +6042,9 @@ export class AgentSession {
 	async moveSession(newCwd: string, targetSessionDir?: string): Promise<void> {
 		this.#assertVibeSessionTransitionAllowed("move the session");
 		await this.sessionManager.moveTo(newCwd, targetSessionDir);
-		await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
+		await this.#taskLifecycle.startNewEpisode(
+			this.#goalModeState?.enabled === true && isZZWorkflowGoalState(this.#goalModeState),
+		);
 	}
 
 	// =========================================================================
@@ -7004,7 +6909,6 @@ export class AgentSession {
 		const previousTools = [...this.agent.state.tools];
 		const previousBaseSystemPrompt = this.#tools.baseSystemPrompt;
 		const previousSystemPrompt = this.agent.state.systemPrompt;
-		const previousBaseSystemPromptBeforeMemoryPromotion = this.#memory.promotionSnapshot;
 		const previousFreshProviderSessionId = this.#freshProviderSessionId;
 		const previousInheritedProviderPromptCacheKey = this.#inheritedProviderPromptCacheKey;
 
@@ -7031,7 +6935,6 @@ export class AgentSession {
 				this.#adoptInheritedProviderPromptCacheKey();
 			}
 			this.#syncAgentSessionId();
-			this.#memory.rekeyForCurrentSessionId();
 
 			let sessionContext = this.buildDisplaySessionContext();
 			const didReloadConversationChange =
@@ -7133,9 +7036,6 @@ export class AgentSession {
 			);
 
 			if (switchingToDifferentSession) {
-				await this.#memory.resetContextForNewTranscript();
-			}
-			if (switchingToDifferentSession) {
 				this.#clearSessionScopedToolState();
 			}
 			this.#reconnectToAgent();
@@ -7165,10 +7065,8 @@ export class AgentSession {
 			this.#taskLifecycle.rehydrate();
 			this.#freshProviderSessionId = previousFreshProviderSessionId;
 			this.#syncAgentSessionId(previousSessionState.sessionId);
-			this.#memory.rekeyForCurrentSessionId();
 			this.agent.setTools(previousTools);
 			this.#tools.setBaseSystemPrompt(previousBaseSystemPrompt);
-			this.#memory.restorePromotionSnapshot(previousBaseSystemPromptBeforeMemoryPromotion);
 			this.agent.setSystemPrompt(previousSystemPrompt);
 			this.agent.replaceMessages(previousAgentMessages);
 			this.agent.replaceQueues(previousSteeringMessages, previousFollowUpMessages);
@@ -7246,8 +7144,6 @@ export class AgentSession {
 		await this.sessionManager.flush();
 		const bashTransition = this.#bash.beginSessionTransition();
 		this.#cancelOwnAsyncJobs();
-		this.#abortAutolearnCapture();
-		await this.#drainAutolearnCapture();
 
 		let sessionTransitioned = false;
 		try {
@@ -7257,7 +7153,9 @@ export class AgentSession {
 				this.sessionManager.createBranchedSession(selectedEntry.parentId);
 			}
 			this.#taskLifecycle.rehydrate();
-			await this.#taskLifecycle.startNewEpisode(this.#goalModeState?.enabled === true);
+			await this.#taskLifecycle.startNewEpisode(
+				this.#goalModeState?.enabled === true && isZZWorkflowGoalState(this.#goalModeState),
+			);
 			this.#bash.markSessionTransition(bashTransition);
 			sessionTransitioned = true;
 		} finally {
@@ -7269,8 +7167,6 @@ export class AgentSession {
 		this.#freshProviderSessionId = undefined;
 		this.#clearInheritedProviderPromptCacheKey();
 		this.#syncAgentSessionId();
-		this.#memory.rekeyForCurrentSessionId();
-		await this.#memory.resetContextForNewTranscript();
 
 		// Reload messages from entries (works for both file and in-memory mode)
 		const sessionContext = this.buildDisplaySessionContext();
@@ -7349,8 +7245,6 @@ export class AgentSession {
 		await this.sessionManager.flush();
 		const bashTransition = this.#bash.beginSessionTransition();
 		this.#cancelOwnAsyncJobs();
-		this.#abortAutolearnCapture();
-		await this.#drainAutolearnCapture();
 
 		let sessionTransitioned = false;
 		try {
@@ -7373,8 +7267,6 @@ export class AgentSession {
 		this.#todo.syncFromBranch();
 		this.#freshProviderSessionId = undefined;
 		this.#syncAgentSessionId();
-		this.#memory.rekeyForCurrentSessionId();
-		await this.#memory.resetContextForNewTranscript();
 
 		const sessionContext = this.buildDisplaySessionContext();
 

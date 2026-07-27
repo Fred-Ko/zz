@@ -31,7 +31,6 @@
       "@oh-my-pi/pi-ai": "17.1.2",
       "@oh-my-pi/pi-catalog": "17.1.2",
       "@oh-my-pi/pi-coding-agent": "17.1.2",
-      "@oh-my-pi/pi-mnemopi": "17.1.2",
       "@oh-my-pi/pi-natives": "17.1.2",
       "@oh-my-pi/pi-tui": "17.1.2",
       "@oh-my-pi/pi-utils": "17.1.2",
@@ -102,7 +101,7 @@
     "@ark/schema": "0.56.2"
   },
   "scripts": {
-    "setup": "bun install && bun run build:native && bun link --cwd=packages/coding-agent && bun link --cwd=packages/workflowd && sh scripts/link-zz.sh",
+    "setup": "bun install && bun run build:native && bun link --cwd=packages/coding-agent && sh scripts/link-zz.sh",
     "dev": "bun --cwd=packages/coding-agent src/cli.ts",
     "dev:timing": "PI_TIMING=x bun --cwd=packages/coding-agent --preload ../utils/src/module-timer.ts src/cli.ts",
     "stats": "bun --cwd=packages/coding-agent src/cli.ts stats",

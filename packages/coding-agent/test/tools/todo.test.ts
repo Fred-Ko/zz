@@ -1,6 +1,7 @@
 import { beforeAll, describe, expect, it } from "bun:test";
 import * as path from "node:path";
 import { Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
+import type { TaskLifecycleState } from "@oh-my-pi/pi-coding-agent/goals/task-lifecycle";
 import { initTheme, theme } from "@oh-my-pi/pi-coding-agent/modes/theme/theme";
 import type { ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
 import {
@@ -19,7 +20,7 @@ import {
 import type { Component } from "@oh-my-pi/pi-tui";
 import { type } from "arktype";
 
-function createSession(initialPhases: TodoPhase[] = []): ToolSession {
+function createSession(initialPhases: TodoPhase[] = [], controlled = false): ToolSession {
 	let phases = initialPhases;
 	return {
 		cwd: "/tmp/test",
@@ -28,6 +29,23 @@ function createSession(initialPhases: TodoPhase[] = []): ToolSession {
 		getSessionSpawns: () => "*",
 		settings: Settings.isolated(),
 		getTodoPhases: () => phases,
+		getGoalModeState: controlled
+			? () => ({
+					enabled: true,
+					mode: "active",
+					controller: "zzworkflow",
+					goal: {
+						id: "zzw-goal",
+						objective: "Run a controlled task",
+						status: "active",
+						tokensUsed: 0,
+						timeUsedSeconds: 0,
+						createdAt: 1,
+						updatedAt: 1,
+					},
+				})
+			: undefined,
+		getTaskLifecycleState: controlled ? () => ({ phase: "EXECUTING" }) as TaskLifecycleState : undefined,
 		setTodoPhases: next => {
 			phases = next;
 		},
@@ -59,6 +77,22 @@ describe("resolveTodoMarkdownPath", () => {
 });
 
 describe("TodoTool auto-start behavior", () => {
+	it("keeps Todo read-only while an authoritative ZZWorkflow is active", async () => {
+		const initial = [{ name: "Implementation", tasks: [{ content: "Apply fix", status: "in_progress" as const }] }];
+		const tool = new TodoTool(createSession(initial, true));
+
+		const mutation = await tool.execute("call-mutate", { op: "done", task: "Apply fix" });
+		expect(mutation.isError).toBe(true);
+		expect(mutation.details?.phases).toEqual(initial);
+		expect(mutation.content).toContainEqual(
+			expect.objectContaining({ type: "text", text: expect.stringContaining("읽기 전용 화면") }),
+		);
+
+		const view = await tool.execute("call-view", { op: "view" });
+		expect(view.isError).toBeUndefined();
+		expect(view.details?.phases).toEqual(initial);
+	});
+
 	it("auto-starts the first task after init", async () => {
 		const tool = new TodoTool(createSession());
 		const result = await tool.execute("call-1", {

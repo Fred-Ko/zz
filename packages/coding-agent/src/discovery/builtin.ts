@@ -1,12 +1,11 @@
 /**
- * Builtin Provider (.omp)
+ * Builtin Provider (.zz)
  *
  * Primary provider for OMP native configs. Supports all capabilities.
  */
 import * as path from "node:path";
 import { getAgentDir, logger, parseFrontmatter, tryParseJson } from "@oh-my-pi/pi-utils";
 import { YAML } from "bun";
-import { getManagedSkillsDir, MANAGED_SKILLS_PROVIDER_ID } from "../autolearn/managed-skills";
 import { registerProvider } from "../capability";
 import { type ContextFile, contextFileCapability } from "../capability/context-file";
 import { type Extension, type ExtensionManifest, extensionCapability } from "../capability/extension";
@@ -23,6 +22,11 @@ import { type SlashCommand, slashCommandCapability } from "../capability/slash-c
 import { type SystemPrompt, systemPromptCapability } from "../capability/system-prompt";
 import { type CustomTool, toolCapability } from "../capability/tool";
 import type { LoadContext, LoadResult } from "../capability/types";
+import knowledgeOperatorSkill from "../skills/knowledge-operator/SKILL.md" with { type: "text" };
+import { getManagedSkillsDir, MANAGED_SKILLS_PROVIDER_ID } from "../skills/managed";
+import zzwPlanEvolutionSkill from "../skills/zzw-plan-evolution/SKILL.md" with { type: "text" };
+import zzwReconciliationSkill from "../skills/zzw-reconciliation/SKILL.md" with { type: "text" };
+import zzwVerificationSkill from "../skills/zzw-verification/SKILL.md" with { type: "text" };
 import { expandTilde } from "../tools/path-utils";
 import {
 	buildRuleFromMarkdown,
@@ -36,7 +40,9 @@ import {
 } from "./helpers";
 
 const PROVIDER_ID = "native";
-const DISPLAY_NAME = "OMP";
+const BUNDLED_SKILLS_PROVIDER_ID = "zz-bundled";
+const BUNDLED_ZZWORKFLOW_SKILLS_PROVIDER_ID = "zzw-bundled";
+const DISPLAY_NAME = "ZZ";
 const DESCRIPTION = "Native ZZ configuration from ~/.zz and .zz/";
 const PRIORITY = 100;
 
@@ -62,7 +68,7 @@ async function getConfigDirs(ctx: LoadContext): Promise<Array<{ dir: string; lev
 		result.push({ dir: projectDir, level: "project" });
 	}
 	// Native user config is profile-scoped: getAgentDir() points at the active
-	// profile's agent dir (~/.omp/profiles/<name>/agent), like sessions and MCP.
+	// profile's agent dir (~/.zz/profiles/<name>/agent), like sessions and MCP.
 	const userDir = await ifNonEmptyDir(getAgentDir());
 	if (userDir) {
 		result.push({ dir: userDir, level: "user" });
@@ -270,7 +276,7 @@ registerProvider<SystemPrompt>(systemPromptCapability.id, {
 
 // Skills
 async function loadSkills(ctx: LoadContext): Promise<LoadResult<Skill>> {
-	// Walk up from cwd finding .omp/skills/ in ancestors (closest first)
+	// Walk up from cwd finding .zz/skills/ in ancestors (closest first)
 	const ancestors = getAncestorDirs(ctx.cwd, ctx.repoRoot ?? ctx.home);
 	const projectScans = ancestors.map(({ dir }) =>
 		scanSkillsFromDir(ctx, {
@@ -281,7 +287,7 @@ async function loadSkills(ctx: LoadContext): Promise<LoadResult<Skill>> {
 		}),
 	);
 
-	// User-level scan from ~/.omp/agent/skills/
+	// User-level scan from ~/.zz/agent/skills/
 	const userScan = scanSkillsFromDir(ctx, {
 		dir: path.join(getAgentDir(), "skills"),
 		providerId: PROVIDER_ID,
@@ -296,10 +302,47 @@ async function loadSkills(ctx: LoadContext): Promise<LoadResult<Skill>> {
 	};
 }
 
-// Managed skills (auto-learn) are a SEPARATE provider at the lowest skill
-// priority, so an authored skill of the same name from ANY other provider wins
-// the capability-level priority dedup. Discovery is unconditional (an empty
-// managed dir is a no-op); only writing/nudging is gated by `autolearn.enabled`.
+async function loadBundledSkills(): Promise<LoadResult<Skill>> {
+	const skillPath = path.join(import.meta.dir, "../skills/knowledge-operator/SKILL.md");
+	const { frontmatter, body } = parseFrontmatter(knowledgeOperatorSkill, { source: skillPath });
+	return {
+		items: [
+			{
+				name: "knowledge-operator",
+				path: skillPath,
+				content: body,
+				frontmatter,
+				level: "user",
+				_source: createSourceMeta(BUNDLED_SKILLS_PROVIDER_ID, skillPath, "user"),
+			},
+		],
+	};
+}
+
+async function loadBundledZZWorkflowSkills(): Promise<LoadResult<Skill>> {
+	const sources = [
+		{ name: "zzw-plan-evolution", content: zzwPlanEvolutionSkill },
+		{ name: "zzw-reconciliation", content: zzwReconciliationSkill },
+		{ name: "zzw-verification", content: zzwVerificationSkill },
+	];
+	return {
+		items: sources.map(source => {
+			const skillPath = path.join(import.meta.dir, `../skills/${source.name}/SKILL.md`);
+			const { frontmatter, body } = parseFrontmatter(source.content, { source: skillPath });
+			return {
+				name: source.name,
+				path: skillPath,
+				content: body,
+				frontmatter,
+				level: "user" as const,
+				_source: createSourceMeta(BUNDLED_ZZWORKFLOW_SKILLS_PROVIDER_ID, skillPath, "user"),
+			};
+		}),
+	};
+}
+
+// Explicitly managed skills are a separate low-priority provider, so authored
+// skills of the same name win.
 const MANAGED_SKILLS_PRIORITY = 5;
 async function loadManagedSkills(ctx: LoadContext): Promise<LoadResult<Skill>> {
 	return scanSkillsFromDir(ctx, {
@@ -319,9 +362,25 @@ registerProvider<Skill>(skillCapability.id, {
 });
 
 registerProvider<Skill>(skillCapability.id, {
+	id: BUNDLED_SKILLS_PROVIDER_ID,
+	displayName: "ZZ Bundled Skills",
+	description: "Skills shipped with ZZ",
+	priority: PRIORITY + 10,
+	load: loadBundledSkills,
+});
+
+registerProvider<Skill>(skillCapability.id, {
+	id: BUNDLED_ZZWORKFLOW_SKILLS_PROVIDER_ID,
+	displayName: "ZZWorkflow Bundled Skills",
+	description: "Controlled workflow skills shipped with ZZ",
+	priority: PRIORITY + 10,
+	load: loadBundledZZWorkflowSkills,
+});
+
+registerProvider<Skill>(skillCapability.id, {
 	id: MANAGED_SKILLS_PROVIDER_ID,
-	displayName: "Managed Skills (auto-learn)",
-	description: "Auto-generated managed skills from ~/.zz/agent/managed-skills",
+	displayName: "Managed Skills",
+	description: "Explicitly managed skills from ~/.zz/agent/managed-skills",
 	priority: MANAGED_SKILLS_PRIORITY,
 	load: loadManagedSkills,
 });
@@ -377,8 +436,8 @@ async function loadRules(ctx: LoadContext): Promise<LoadResult<Rule>> {
 	// Top-level RULES.md is a sticky always-apply rule. Documented in
 	// https://omp.sh/docs/context-files as the file that gets "re-injected near
 	// the current turn so they keep hold across long conversations".
-	// User scope:    ~/.omp/agent/RULES.md
-	// Project scope: nearest .omp/RULES.md walking up from cwd to repoRoot
+	// User scope:    ~/.zz/agent/RULES.md
+	// Project scope: nearest .zz/RULES.md walking up from cwd to repoRoot
 	const userRulesFile = path.join(getAgentDir(), "RULES.md");
 	const userRule = await loadStickyRulesFile(userRulesFile, "user");
 	if (userRule) items.push(userRule);

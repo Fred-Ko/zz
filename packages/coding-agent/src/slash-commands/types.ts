@@ -72,6 +72,8 @@ export interface SlashCommandRuntime {
 	reloadPlugins: () => Promise<void>;
 	notifyTitleChanged?: () => Promise<void> | void;
 	notifyConfigChanged?: () => Promise<void> | void;
+	/** Resume a paused controlled goal and submit its next turn after a user gate is removed. */
+	requestGoalContinuation?: () => Promise<void>;
 }
 
 /**
@@ -83,6 +85,8 @@ export interface SlashCommandRuntime {
  */
 export interface TuiSlashCommandRuntime {
 	ctx: InteractiveModeContext;
+	/** Called after a builtin is accepted but before its handler emits output. */
+	onCommandAccepted?: (command: ParsedSlashCommand) => void;
 }
 
 /** Unified slash-command spec consumed by both TUI and ACP dispatchers. */

@@ -46,7 +46,6 @@ import type { BashResult } from "../../exec/bash-executor";
 import type { ExecOptions, ExecResult } from "../../exec/exec";
 import type * as PiCodingAgent from "../../index";
 import type { LocalProtocolOptions } from "../../internal-urls/local-protocol";
-import type { MemoryRuntimeContext } from "../../memory-backend";
 import type { CustomEditor } from "../../modes/components/custom-editor";
 import type { Theme } from "../../modes/theme/theme";
 import type { CompactMode } from "../../session/compact-modes";
@@ -441,8 +440,6 @@ export interface ExtensionContext {
 	shutdown(): void;
 	/** Get the current effective system prompt. */
 	getSystemPrompt(): string[];
-	/** Structured memory runtime for status/search/save across the configured backend. */
-	memory?: MemoryRuntimeContext;
 	/**
 	 * Schedule a repeating callback whose throws are contained. Unlike raw
 	 * `setInterval`, a synchronous throw or rejected promise from `callback` is

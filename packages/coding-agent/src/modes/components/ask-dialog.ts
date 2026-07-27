@@ -33,8 +33,8 @@ import { editorKey } from "./keybinding-hints";
 import { bottomBorder, divider, row, topBorder } from "./overlay-box";
 import { handleTabSwitchKey } from "./selector-helpers";
 
-const OTHER_OPTION = "Other (type your own)";
-const SUBMIT_OPTION = "Submit";
+const OTHER_OPTION = "직접 입력";
+const SUBMIT_OPTION = "제출";
 
 /** Fraction of the terminal the dialog may occupy. The box height is fixed
  *  at spawn from the tallest tab's content (re-measured only on viewport
@@ -249,12 +249,12 @@ function renderAnswerSummary(question: ExtensionAskDialogQuestion, state: Questi
 	const selected = question.options.map(option => option.label).filter(label => state.selectedOptions.has(label));
 	if (question.multi) {
 		const answers = [...selected];
-		if (state.customInput !== undefined) answers.push(`Other: “${normalizedInlineInput(state.customInput)}”`);
-		return answers.length > 0 ? answers.join(", ") : theme.fg("warning", "unanswered");
+		if (state.customInput !== undefined) answers.push(`직접 입력: “${normalizedInlineInput(state.customInput)}”`);
+		return answers.length > 0 ? answers.join(", ") : theme.fg("warning", "미응답");
 	}
 	if (state.customInput !== undefined) return `“${normalizedInlineInput(state.customInput)}”`;
-	if (selected.length === 0) return theme.fg("warning", "unanswered");
-	return selected[0] ?? theme.fg("warning", "unanswered");
+	if (selected.length === 0) return theme.fg("warning", "미응답");
+	return selected[0] ?? theme.fg("warning", "미응답");
 }
 
 function clearNote(state: QuestionState): void {
@@ -479,7 +479,7 @@ export class AskDialogComponent implements Component {
 	}
 
 	#titleText(): string {
-		return this.#remainingSeconds === undefined ? "Ask" : `Ask (${this.#remainingSeconds}s)`;
+		return this.#remainingSeconds === undefined ? "질문" : `질문 (${this.#remainingSeconds}초)`;
 	}
 
 	#hasSubmitTab(): boolean {
@@ -513,14 +513,14 @@ export class AskDialogComponent implements Component {
 					id: String(index),
 					label: questionTabLabel(question, index),
 				})),
-				{ id: "submit", label: "Submit" },
+				{ id: "submit", label: "제출" },
 			];
 			this.#tabBar = new TabBar("", tabs, getTabBarTheme(), this.#activeTabIndex);
 			this.#tabBar.showHint = false;
 			lines.push(...this.#tabBar.render(width));
 		}
 		if (this.#isSubmitTab()) {
-			lines.push(theme.bold(theme.fg("accent", "Review answers")));
+			lines.push(theme.bold(theme.fg("accent", "답변 검토")));
 			return lines;
 		}
 		const questionIndex = this.#currentQuestionIndex();
@@ -531,19 +531,19 @@ export class AskDialogComponent implements Component {
 	}
 
 	#footerHintText(indicator: string): string {
-		const cancel = `${cancelKeyLabel()} cancel`;
+		const cancel = `${cancelKeyLabel()} 취소`;
 		if (this.#isSubmitTab()) {
-			const scroll = indicator ? ` ${indicator} scroll ·` : "";
-			return `Enter submit · ↑/↓ scroll ·${scroll} ${cancel}`;
+			const scroll = indicator ? ` ${indicator} 스크롤 ·` : "";
+			return `Enter 제출 · ↑/↓ 스크롤 ·${scroll} ${cancel}`;
 		}
 		const question = this.questions[this.#currentQuestionIndex()];
-		const action = question?.multi ? "Space/Enter toggle · n note" : "Enter select · n note";
+		const action = question?.multi ? "Space/Enter 선택 · n 메모" : "Enter 선택 · n 메모";
 		const tabs = this.#hasSubmitTab() ? " · Tab/←/→" : "";
 		if (this.#questionCanPage && indicator) {
 			return `${action} · ↑/↓${tabs} · ${cancel} · ${pageKeysLabel()} ${indicator}`;
 		}
-		const scroll = indicator ? ` ${indicator} scroll ·` : "";
-		return `${action} · ↑/↓ move${tabs} ·${scroll} ${cancel}`;
+		const scroll = indicator ? ` ${indicator} 스크롤 ·` : "";
+		return `${action} · ↑/↓ 이동${tabs} ·${scroll} ${cancel}`;
 	}
 
 	#questionRows(question: ExtensionAskDialogQuestion): QuestionRow[] {
@@ -673,7 +673,7 @@ export class AskDialogComponent implements Component {
 		this.#promptActive = true;
 		try {
 			const input = await this.callbacks.onPrompt(
-				boundPromptTitle("Custom answer: ", question.question),
+				boundPromptTitle("직접 답변: ", question.question),
 				state.customInput,
 			);
 			if (input === undefined || this.#closed) return;
@@ -704,7 +704,7 @@ export class AskDialogComponent implements Component {
 		this.#promptActive = true;
 		try {
 			const input = await this.callbacks.onPrompt(
-				boundPromptTitle(`Note for ${rowItem.label}: `, question.question),
+				boundPromptTitle(`${rowItem.label} 메모: `, question.question),
 				state.noteRowKey === rowItem.key ? state.note : undefined,
 			);
 			if (input === undefined || this.#closed) return;
@@ -799,10 +799,7 @@ export class AskDialogComponent implements Component {
 		const unanswered = this.#unansweredCount();
 		if (unanswered > 0) {
 			allLines.push(
-				theme.fg(
-					"warning",
-					`${unanswered} unanswered question${unanswered === 1 ? "" : "s"}; Enter still submits.`,
-				),
+				theme.fg("warning", `미응답 질문 ${unanswered}개가 있습니다. Enter를 누르면 그대로 제출합니다.`),
 			);
 			allLines.push("");
 		}
@@ -817,7 +814,7 @@ export class AskDialogComponent implements Component {
 			if (submittedNote?.trim()) {
 				const note = normalizedInlineInput(submittedNote);
 				allLines.push(
-					theme.fg("muted", `   Note: ${truncateToWidth(note, Math.max(1, width - 9), Ellipsis.Unicode)}`),
+					theme.fg("muted", `   메모: ${truncateToWidth(note, Math.max(1, width - 9), Ellipsis.Unicode)}`),
 				);
 			}
 		}

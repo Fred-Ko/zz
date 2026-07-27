@@ -7,7 +7,7 @@ import * as path from "node:path";
 import type { AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { ToolExample, TSchema } from "@oh-my-pi/pi-ai";
 import { renderToolInventory } from "@oh-my-pi/pi-ai/dialect";
-import { $env, getGpuCachePath, getProjectDir, hasFsCode, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
+import { $env, $which, getGpuCachePath, getProjectDir, hasFsCode, isEnoent, logger, prompt } from "@oh-my-pi/pi-utils";
 import { contextFileCapability } from "./capability/context-file";
 import { systemPromptCapability } from "./capability/system-prompt";
 import { findConfigFile } from "./config";
@@ -123,8 +123,10 @@ const GPU_PROBE_STDOUT_DRAIN_MS = 250;
 
 async function runGpuProbe(cmd: string[]): Promise<string | null> {
 	try {
+		const executable = $which(cmd[0], { PATH: process.env.PATH });
+		if (!executable) return null;
 		const proc = Bun.spawn({
-			cmd,
+			cmd: [executable, ...cmd.slice(1)],
 			stdout: "pipe",
 			stderr: "ignore",
 			stdin: "ignore",
@@ -495,8 +497,6 @@ export interface BuildSystemPromptOptions {
 	secretsEnabled?: boolean;
 	/** Pre-loaded workspace tree (skips discovery if provided). May be a Promise to allow early kick-off. */
 	workspaceTree?: WorkspaceTree | Promise<WorkspaceTree>;
-	/** Whether the local memory://root summary is active. */
-	memoryRootEnabled?: boolean;
 	/** Active model identifier (e.g. "anthropic/claude-opus-4") used by prompt policy and optionally surfaced. */
 	model?: string;
 	/** Whether to surface `model` in the workstation block. Model-specific prompt policy still uses it. Default: true. */
@@ -551,7 +551,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		taskIrcEnabled = false,
 		secretsEnabled = false,
 		workspaceTree: providedWorkspaceTree,
-		memoryRootEnabled = false,
 		model,
 		includeModelInPrompt = true,
 		personality = "default",
@@ -829,7 +828,6 @@ export async function buildSystemPrompt(options: BuildSystemPromptOptions = {}):
 		MAX_CONCURRENCY: normalizeConcurrencyLimit(taskMaxConcurrency),
 		taskIrcEnabled,
 		secretsEnabled,
-		hasMemoryRoot: memoryRootEnabled,
 		hasObsidian: hasObsidian(),
 		includeWorkspaceTree,
 		renderMermaid,

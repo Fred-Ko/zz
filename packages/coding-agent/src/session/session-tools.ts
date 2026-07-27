@@ -1,6 +1,6 @@
 import type { Agent, AgentTool } from "@oh-my-pi/pi-agent-core";
 import type { Model } from "@oh-my-pi/pi-ai";
-import { logger, prompt, stringProperty } from "@oh-my-pi/pi-utils";
+import { prompt, stringProperty } from "@oh-my-pi/pi-utils";
 import { reset as resetCapabilities } from "../capability";
 import type { ModelRegistry } from "../config/model-registry";
 import { formatModelString } from "../config/model-resolver";
@@ -11,9 +11,6 @@ import type { ExtensionRunner } from "../extensibility/extensions";
 import { ExtensionToolWrapper } from "../extensibility/extensions/wrapper";
 import { loadSkills, type Skill, type SkillWarning, setActiveSkills } from "../extensibility/skills";
 import type { LocalProtocolOptions } from "../internal-urls";
-import { resolveMemoryBackend } from "../memory-backend/resolve";
-import { MEMORY_BACKEND_TOOL_NAMES } from "../memory-backend/tool-names";
-import type { MemoryBackendStartOptions } from "../memory-backend/types";
 import xdevMountNoticePrompt from "../prompts/system/xdev-mount-notice.md" with { type: "text" };
 import { usesCodexTaskPrompt } from "../task/prompt-policy";
 import { isMCPToolName, normalizeToolNames } from "../tools/builtin-names";
@@ -47,10 +44,7 @@ export interface SessionToolsHost {
 	queuedMessageCount(): number;
 	planModeEnabled(): boolean;
 	model(): Model | undefined;
-	memoryBackendSession(): MemoryBackendStartOptions["session"];
 	clearInheritedProviderPromptCacheKey(): void;
-	clearMemoryPromotionSnapshot(): void;
-	captureMemoryPromotionSnapshot(prompt: string[]): void;
 	emitNotice(level: "info" | "warning" | "error", message: string, source?: string): void;
 	notifyCommandMetadataChanged(): void;
 	localProtocolOptions(): LocalProtocolOptions;
@@ -523,7 +517,6 @@ export class SessionTools {
 		if (rebuiltSystemPrompt && rebuiltSignature) {
 			if (this.#lastAppliedToolSignature !== undefined) this.#host.clearInheritedProviderPromptCacheKey();
 			this.#baseSystemPrompt = rebuiltSystemPrompt;
-			this.#host.clearMemoryPromotionSnapshot();
 			this.#host.agent.setSystemPrompt(this.#baseSystemPrompt);
 			this.#lastAppliedToolSignature = rebuiltSignature;
 			this.#promptModelKey = this.#currentPromptModelKey();
@@ -601,6 +594,7 @@ export class SessionTools {
 			...skillsSettings,
 			cwd: this.#host.sessionManager.getCwd(),
 			disabledExtensions: this.#host.settings.get("disabledExtensions") ?? [],
+			enableBundledKnowledge: this.#host.settings.get("knowledge.enabled"),
 		});
 		this.#skills = discovered.skills;
 		this.#skillWarnings = discovered.warnings;
@@ -678,27 +672,6 @@ export class SessionTools {
 		}
 	}
 
-	/** Replaces memory-backend tools while preserving unrelated selections. */
-	async replaceMemoryTools(tools: AgentTool[]): Promise<void> {
-		const removed = new Set<string>(MEMORY_BACKEND_TOOL_NAMES.filter(name => this.#builtInToolNames.has(name)));
-		const nextActive = this.getEnabledToolNames().filter(name => !removed.has(name));
-		for (const name of removed) {
-			this.#toolRegistry.delete(name);
-			this.#builtInToolNames.delete(name);
-		}
-
-		for (const tool of tools) {
-			if (!MEMORY_BACKEND_TOOL_NAMES.some(name => name === tool.name) || this.#toolRegistry.has(tool.name)) {
-				continue;
-			}
-			const wrapped = this.#wrapRuntimeTool(tool);
-			this.#toolRegistry.set(wrapped.name, wrapped);
-			this.#builtInToolNames.add(wrapped.name);
-			nextActive.push(wrapped.name);
-		}
-		await this.applyActiveToolsByName([...new Set(nextActive)]);
-	}
-
 	/**
 	 * Session-scoped enable/disable for the settings-gated `computer` tool.
 	 *
@@ -742,7 +715,6 @@ export class SessionTools {
 		const built = await this.#rebuildSystemPrompt(activeToolNames, this.#toolRegistry);
 		if (this.#host.isDisposed()) return;
 		this.#baseSystemPrompt = built.systemPrompt;
-		this.#host.clearMemoryPromotionSnapshot();
 		if (
 			previousBaseSystemPrompt.length !== this.#baseSystemPrompt.length ||
 			previousBaseSystemPrompt.some((part, index) => part !== this.#baseSystemPrompt[index])
@@ -758,46 +730,6 @@ export class SessionTools {
 			.map(name => this.#toolRegistry.get(name))
 			.filter((tool): tool is AgentTool => tool != null);
 		this.#lastAppliedToolSignature = this.#computeAppliedToolSignature(activeToolNames, activeTools);
-	}
-
-	/** Applies one-turn memory prompt injection before an agent run. */
-	async buildSystemPromptForAgentStart(promptText: string): Promise<string[]> {
-		const backend = await resolveMemoryBackend(this.#host.settings);
-		if (!backend.beforeAgentStartPrompt) return this.#baseSystemPrompt;
-
-		try {
-			const injected = await backend.beforeAgentStartPrompt(this.#host.memoryBackendSession(), promptText);
-			if (!injected) return this.#baseSystemPrompt;
-
-			const previousBaseSystemPrompt = this.#baseSystemPrompt;
-			try {
-				await this.refreshBaseSystemPrompt();
-			} catch (refreshErr) {
-				logger.debug("Memory backend prompt refresh after beforeAgentStartPrompt failed", {
-					backend: backend.id,
-					error: String(refreshErr),
-				});
-			}
-
-			if (
-				this.#baseSystemPrompt.length !== previousBaseSystemPrompt.length ||
-				this.#baseSystemPrompt.some((part, index) => part !== previousBaseSystemPrompt[index])
-			) {
-				return this.#baseSystemPrompt;
-			}
-
-			this.#host.captureMemoryPromotionSnapshot(previousBaseSystemPrompt);
-			const stablePrompt = [...previousBaseSystemPrompt, injected];
-			this.#baseSystemPrompt = stablePrompt;
-			this.#host.agent.setSystemPrompt(stablePrompt);
-			return stablePrompt;
-		} catch (err) {
-			logger.debug("Memory backend beforeAgentStartPrompt failed", {
-				backend: backend.id,
-				error: String(err),
-			});
-			return this.#baseSystemPrompt;
-		}
 	}
 
 	/**
@@ -827,12 +759,12 @@ export class SessionTools {
 	 * the next time {@link applyActiveToolsByName} runs. Do not refactor `describeTool`
 	 * to cache per-tool strings without preserving this property.
 	 *
-	 * Inputs NOT covered: tool input schemas; memory instructions read from disk;
+	 * Inputs NOT covered: tool input schemas;
 	 * and SDK-init-time closure constants in `sdk.ts` (`inlineToolDescriptors`,
 	 * `eagerTasks`, `intentField`, `mcpDiscoveryEnabled`, `secretsEnabled`). The
 	 * closure-captured ones cannot change at runtime regardless of skip behavior.
 	 * For everything else, callers must explicitly call {@link refreshBaseSystemPrompt}
-	 * after side-effecting changes; see the memory hooks and {@link syncAfterModelChange}.
+	 * after side-effecting changes; see {@link syncAfterModelChange}.
 	 *
 	 * The current calendar date IS covered (appended as a segment) because
 	 * `buildSystemPrompt` injects it into the prompt body (`Today is '{{date}}'`).

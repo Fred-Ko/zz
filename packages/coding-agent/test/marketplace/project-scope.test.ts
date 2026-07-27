@@ -44,7 +44,7 @@ describe("resolveActiveProjectRegistryPath", () => {
 	let tmpDir: string;
 
 	beforeEach(() => {
-		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-proj-scope-"));
+		tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "zz-proj-scope-"));
 	});
 
 	afterEach(() => {
@@ -52,34 +52,34 @@ describe("resolveActiveProjectRegistryPath", () => {
 		removeSyncWithRetries(tmpDir);
 	});
 
-	it("walk-up finds nearest .omp/ directory", async () => {
-		// Layout: tmpDir/.omp/   +   tmpDir/sub/nested/  (cwd)
-		// Resolver must climb from cwd → sub → tmpDir and find .omp/ there.
-		fs.mkdirSync(path.join(tmpDir, ".omp"), { recursive: true });
+	it("walk-up finds nearest .zz/ directory", async () => {
+		// Layout: tmpDir/.zz/   +   tmpDir/sub/nested/  (cwd)
+		// Resolver must climb from cwd → sub → tmpDir and find .zz/ there.
+		fs.mkdirSync(path.join(tmpDir, ".zz"), { recursive: true });
 		const cwd = path.join(tmpDir, "sub", "nested");
 		fs.mkdirSync(cwd, { recursive: true });
 
 		const result = await resolveActiveProjectRegistryPath(cwd);
 
-		expect(result).toBe(path.join(tmpDir, ".omp", "plugins", "installed_plugins.json"));
+		expect(result).toBe(path.join(tmpDir, ".zz", "plugins", "installed_plugins.json"));
 	});
 
-	it("walk-up stops at the nearest .omp/ — does not skip to a more distant one", async () => {
-		// Layout: tmpDir/.omp/   +   tmpDir/sub/.omp/   +   tmpDir/sub/nested/  (cwd)
-		// Resolver must stop at tmpDir/sub/.omp/, not climb further to tmpDir/.omp/.
-		fs.mkdirSync(path.join(tmpDir, ".omp"), { recursive: true });
-		fs.mkdirSync(path.join(tmpDir, "sub", ".omp"), { recursive: true });
+	it("walk-up stops at the nearest .zz/ — does not skip to a more distant one", async () => {
+		// Layout: tmpDir/.zz/   +   tmpDir/sub/.zz/   +   tmpDir/sub/nested/  (cwd)
+		// Resolver must stop at tmpDir/sub/.zz/, not climb further to tmpDir/.zz/.
+		fs.mkdirSync(path.join(tmpDir, ".zz"), { recursive: true });
+		fs.mkdirSync(path.join(tmpDir, "sub", ".zz"), { recursive: true });
 		const cwd = path.join(tmpDir, "sub", "nested");
 		fs.mkdirSync(cwd, { recursive: true });
 
 		const result = await resolveActiveProjectRegistryPath(cwd);
 
-		expect(result).toBe(path.join(tmpDir, "sub", ".omp", "plugins", "installed_plugins.json"));
+		expect(result).toBe(path.join(tmpDir, "sub", ".zz", "plugins", "installed_plugins.json"));
 	});
 
-	it("falls back to .git root when no .omp/ exists", async () => {
+	it("falls back to .git root when no .zz/ exists", async () => {
 		// Layout: tmpDir/.git/   +   tmpDir/sub/  (cwd)
-		// No .omp/ anywhere → second pass finds .git/ at tmpDir.
+		// No .zz/ anywhere → second pass finds .git/ at tmpDir.
 		// Returned path is relative to the .git root, not .git itself.
 		fs.mkdirSync(path.join(tmpDir, ".git"), { recursive: true });
 		const cwd = path.join(tmpDir, "sub");
@@ -87,11 +87,11 @@ describe("resolveActiveProjectRegistryPath", () => {
 
 		const result = await resolveActiveProjectRegistryPath(cwd);
 
-		expect(result).toBe(path.join(tmpDir, ".omp", "plugins", "installed_plugins.json"));
+		expect(result).toBe(path.join(tmpDir, ".zz", "plugins", "installed_plugins.json"));
 	});
 
-	it("returns null when neither .omp/ nor .git/ found anywhere in the tree", async () => {
-		// Start at the filesystem root — guaranteed to have no .omp/ or .git/ ancestors.
+	it("returns null when neither .zz/ nor .git/ found anywhere in the tree", async () => {
+		// Start at the filesystem root — guaranteed to have no .zz/ or .git/ ancestors.
 		const result = await resolveActiveProjectRegistryPath(path.sep);
 
 		expect(result).toBeNull();
@@ -99,8 +99,8 @@ describe("resolveActiveProjectRegistryPath", () => {
 
 	it("does not treat ~/.git as a project root (pass-2 home-dir guard)", async () => {
 		// Simulate a dotfiles repo managed with a bare-git technique: ~/.git exists.
-		// resolveActiveProjectRegistryPath must NOT return ~/.omp/.../installed_plugins.json.
-		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "omp-proj-scope-home-"));
+		// resolveActiveProjectRegistryPath must NOT return ~/.zz/.../installed_plugins.json.
+		const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "zz-proj-scope-home-"));
 		vi.spyOn(os, "homedir").mockReturnValue(homeDir);
 		const fakeHomeGit = path.join(homeDir, ".git");
 		await fs.promises.mkdir(fakeHomeGit, { recursive: true });
@@ -108,8 +108,8 @@ describe("resolveActiveProjectRegistryPath", () => {
 		await fs.promises.mkdir(cwd, { recursive: true });
 		try {
 			const result = await resolveActiveProjectRegistryPath(cwd);
-			const homeOmpPath = path.join(homeDir, ".omp", "plugins", "installed_plugins.json");
-			expect(result).not.toBe(homeOmpPath);
+			const homeZzPath = path.join(homeDir, ".zz", "plugins", "installed_plugins.json");
+			expect(result).not.toBe(homeZzPath);
 			expect(result).toBeNull();
 		} finally {
 			removeSyncWithRetries(homeDir);
@@ -118,7 +118,7 @@ describe("resolveActiveProjectRegistryPath", () => {
 
 	it("canonical path — /repo and /repo/src resolve to the same registry file", async () => {
 		// Both sub-directories of the same project must produce identical paths.
-		fs.mkdirSync(path.join(tmpDir, ".omp"), { recursive: true });
+		fs.mkdirSync(path.join(tmpDir, ".zz"), { recursive: true });
 		const src = path.join(tmpDir, "src");
 		fs.mkdirSync(src, { recursive: true });
 
@@ -135,22 +135,22 @@ describe("resolveActiveProjectRegistryPath", () => {
 describe("listClaudePluginRoots — project shadows user", () => {
 	let tmpHome: string;
 	let tmpProject: string;
-	/** Path where listClaudePluginRoots reads the user OMP registry. */
+	/** Path where listClaudePluginRoots reads the user ZZ registry. */
 	let userRegPath: string;
 	/** Path where listClaudePluginRoots reads the project registry (resolved from tmpProject). */
 	let projectRegPath: string;
 
 	beforeEach(() => {
-		tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "omp-shadow-home-"));
-		tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), "omp-shadow-proj-"));
+		tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "zz-shadow-home-"));
+		tmpProject = fs.mkdtempSync(path.join(os.tmpdir(), "zz-shadow-proj-"));
 
-		// Create .omp/ in project so resolveActiveProjectRegistryPath finds it.
-		fs.mkdirSync(path.join(tmpProject, ".omp", "plugins"), { recursive: true });
+		// Create .zz/ in project so resolveActiveProjectRegistryPath finds it.
+		fs.mkdirSync(path.join(tmpProject, ".zz", "plugins"), { recursive: true });
 
-		userRegPath = path.join(tmpHome, ".omp", "plugins", "installed_plugins.json");
+		userRegPath = path.join(tmpHome, ".zz", "plugins", "installed_plugins.json");
 		fs.mkdirSync(path.dirname(userRegPath), { recursive: true });
 
-		projectRegPath = path.join(tmpProject, ".omp", "plugins", "installed_plugins.json");
+		projectRegPath = path.join(tmpProject, ".zz", "plugins", "installed_plugins.json");
 	});
 
 	afterEach(() => {

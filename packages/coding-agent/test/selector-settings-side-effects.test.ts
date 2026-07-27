@@ -66,18 +66,6 @@ describe("selector setting side effects", () => {
 		expect(invalidate).toHaveBeenCalledTimes(1);
 		expect(requestRender).toHaveBeenCalledTimes(1);
 	});
-	it("applies memory backend changes to the live session", () => {
-		const applyMemoryBackend = vi.fn(async () => {});
-		const controller = new SelectorController({
-			session: { applyMemoryBackend },
-			showError: vi.fn(),
-		} as unknown as InteractiveModeContext);
-
-		controller.handleSettingChange("memory.backend", "mnemopi");
-
-		expect(applyMemoryBackend).toHaveBeenCalledTimes(1);
-	});
-
 	for (const id of ["terminal.showImages", "showImages"]) {
 		for (const visible of [false, true]) {
 			it(`updates every image owner and rebuilds the transcript when ${id}=${visible}`, () => {
@@ -475,8 +463,8 @@ describe("selector setting side effects", () => {
 		const globalSelector = `${globalModel.provider}/${globalModel.id}`;
 		const testDir = path.join(os.tmpdir(), `selector-runtime-identical-${Snowflake.next()}`);
 		const projectDir = path.join(testDir, "project");
-		fs.mkdirSync(path.join(projectDir, ".omp"), { recursive: true });
-		fs.writeFileSync(path.join(projectDir, ".omp", "config.yml"), `modelRoles:\n  default: ${projectSelector}\n`);
+		fs.mkdirSync(path.join(projectDir, ".zz"), { recursive: true });
+		fs.writeFileSync(path.join(projectDir, ".zz", "config.yml"), `modelRoles:\n  default: ${projectSelector}\n`);
 
 		try {
 			const settings = await Settings.loadIsolated({
@@ -671,7 +659,7 @@ describe("selector setting side effects", () => {
 				expect(settings.getGlobalModelRole("default")).toBeUndefined();
 				expect(settings.getModelRole("default")).toBe(overlaySelector);
 				expect(settings.getModelRoleProvenance("default")).toBe("overlay");
-				expect(await Bun.file(path.join(projectDir, ".omp", "config.yml")).text()).toContain(
+				expect(await Bun.file(path.join(projectDir, ".zz", "config.yml")).text()).toContain(
 					`default: ${projectSelector}`,
 				);
 				expect(setModel).not.toHaveBeenCalled();

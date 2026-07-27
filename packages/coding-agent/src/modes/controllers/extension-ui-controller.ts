@@ -619,6 +619,7 @@ export class ExtensionUiController {
 		dialogOptions?: ExtensionUIDialogOptions,
 	): Promise<ExtensionAskDialogResult | undefined> {
 		return this.#presentDialog<ExtensionAskDialogResult>(dialogOptions?.signal, settle => {
+			this.ctx.statusLine.setStandaloneMainStatus(true);
 			let askDialog: AskDialogComponent | undefined;
 			let promptEditor: HookEditorComponent | undefined;
 			let promptResolve: ((value: string | undefined) => void) | undefined;
@@ -685,6 +686,7 @@ export class ExtensionUiController {
 				promptEditor = undefined;
 				this.ctx.editorContainer.clear();
 				this.ctx.editorContainer.addChild(this.ctx.editor);
+				this.ctx.statusLine.setStandaloneMainStatus(false);
 				this.ctx.ui.setFocus(this.ctx.editor);
 				this.ctx.ui.requestRender();
 			};

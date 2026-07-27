@@ -28,12 +28,6 @@ describe("parseInternalUrl — standard URLs", () => {
 		expect(u.rawPathname).toBe("/field");
 	});
 
-	it("parses memory:// URL", () => {
-		const u = parseInternalUrl("memory://root");
-		expect(u.rawHost).toBe("root");
-		expect(u.protocol).toBe("memory:");
-	});
-
 	it("parses local:// URL", () => {
 		const u = parseInternalUrl("local://PLAN.md");
 		expect(u.rawHost).toBe("PLAN.md");
@@ -181,10 +175,6 @@ describe("parseInternalUrl — protocol field", () => {
 
 	it("extracts agent: protocol", () => {
 		expect(parseInternalUrl("agent://x").protocol).toBe("agent:");
-	});
-
-	it("extracts memory: protocol", () => {
-		expect(parseInternalUrl("memory://x").protocol).toBe("memory:");
 	});
 
 	it("extracts local: protocol", () => {

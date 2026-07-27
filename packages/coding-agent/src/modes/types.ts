@@ -117,6 +117,8 @@ export interface InteractiveModeContext {
 	hookWidgetContainerAbove: Container;
 	hookWidgetContainerBelow: Container;
 	statusLine: StatusLineComponent;
+	/** Resume a paused controlled goal and submit its next turn after a user gate is removed. */
+	requestGoalContinuation?: () => Promise<void>;
 
 	// Session access
 	session: AgentSession;
@@ -359,7 +361,7 @@ export interface InteractiveModeContext {
 	handleShakeCommand(mode: ShakeMode): Promise<void>;
 	handleMoveCommand(targetPath?: string): Promise<void>;
 	handleRenameCommand(title: string): Promise<void>;
-	handleMemoryCommand(text: string): Promise<void>;
+	handleKnowledgeCommand(text: string): Promise<void>;
 	handleSTTToggle(): Promise<void>;
 	/** Start or stop the Codex-backed realtime voice session. */
 	handleLiveCommand(): Promise<void>;
@@ -427,6 +429,12 @@ export interface InteractiveModeContext {
 	handleVibeModeCommand(initialPrompt?: string): Promise<void>;
 	handleGoalModeCommand(rest?: string): Promise<void>;
 	handleGuidedGoalCommand(rest?: string): Promise<void>;
+	handleZZWorkflowGoalCommand(rest?: string): Promise<void>;
+	handleZZWorkflowGuidedGoalCommand(rest?: string): Promise<void>;
+	/** Consume one answer while `/guided-goal` is waiting on the main editor. */
+	submitGuidedGoalInput?(text: string): boolean;
+	/** Cancel the active `/guided-goal` editor wait, if one exists. */
+	cancelGuidedGoalInput?(): boolean;
 	handleLoopCommand(args?: string): Promise<string | undefined>;
 	setLoopPrompt(prompt: string): void;
 	disableLoopMode(): void;

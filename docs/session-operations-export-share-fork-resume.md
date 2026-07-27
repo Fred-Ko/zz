@@ -169,9 +169,9 @@ keeping the conversation you can see.
   abort it first.
 - Closes every cached provider-session state entry (server-side conversation /
   prompt-cache handles) and reports how many were pruned.
-- Mints a fresh provider session id and re-keys hindsight and mnemopi memory to
-  it, and invalidates the append-only context so the next turn re-sends the full
-  local transcript to the provider.
+- Mints a fresh provider session id and invalidates append-only provider context
+  so the next turn re-sends the full local transcript. ZZ Knowledge scope is
+  derived from repository/workflow identity rather than provider session state.
 - Leaves the local transcript, session file, and session identity unchanged, so
   nothing you have said or received is lost.
 

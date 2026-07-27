@@ -1,6 +1,6 @@
 # Settings
 
-`zz` resolves settings from built-in defaults, a persistent global config file, optional project-local config, one-shot CLI overlays, and in-memory runtime overrides. Reach for project settings when one repository needs a different provider set, model role, tool policy, memory backend, or UI behavior than your global defaults — without touching your machine-wide configuration.
+`zz` resolves settings from built-in defaults, a persistent global config file, optional project-local config, one-shot CLI overlays, and in-memory runtime overrides. Reach for project settings when one repository needs a different provider set, model role, tool policy, ZZ Knowledge policy, or UI behavior than your global defaults — without touching your machine-wide configuration.
 
 Settings are stored as plain YAML mappings. Every key, its type, default, and enum values come from the settings schema, and you can inspect or change any of them with `zz config` or the interactive `/settings` panel.
 
@@ -574,7 +574,7 @@ read:
 | `read.toolResultPreview` | boolean | `false` | Inline preview of tool results. |
 | `readLineNumbers` | boolean | `false` | Show plain line numbers. |
 
-### Context, compaction, and memory
+### Context, compaction, and Knowledge
 
 ```yaml
 contextPromotion:
@@ -588,8 +588,12 @@ compaction:
   thresholdTokens: -1        # fixed token limit when > 0
   remoteEnabled: true
 
-memory:
-  backend: off               # off, local, hindsight, mnemopi
+knowledge:
+  enabled: false
+  userId: default
+  securityBoundary: personal
+  hindsight:
+    apiUrl: http://127.0.0.1:8888
 ```
 
 | Key | Type | Default | Notes |
@@ -604,10 +608,18 @@ memory:
 | `compaction.keepRecentTokens` | number | `20000` | Recent tokens always preserved. |
 | `compaction.remoteEnabled` | boolean | `true` | Allow remote compaction service. |
 | `compaction.autoContinue` | boolean | `true` | Continue automatically after compaction. |
-| `memory.backend` | enum | `off` | `off`, `local`, `hindsight`, `mnemopi`. Each backend has its own `hindsight.*` / `mnemopi.*` / `memories.*` tuning keys. |
-| `autolearn.enabled` | boolean | `false` | Experimental: after the agent stops, nudge it to capture lessons to memory and create/enhance isolated managed skills under `~/.zz/agent/managed-skills`. Enables the `manage_skill` tool (and `learn` when a memory backend is active). |
-| `autolearn.autoContinue` | boolean | `false` | When `autolearn.enabled`, auto-run one capture turn at stop (uses extra tokens). Off = a passive reminder rides your next turn. |
-| `autolearn.minToolCalls` | number | `5` | Only nudge after a turn that used at least this many tools. |
+| `knowledge.enabled` | boolean | `false` | Enable the independent ZZ Knowledge policy layer and `knowledge_*` tools. |
+| `knowledge.userId` | string | `default` | Stable user identity used in the security-boundary bank derivation. |
+| `knowledge.securityBoundary` | string | `personal` | Security isolation boundary such as personal, company, or customer. |
+| `knowledge.repositoryDisplayName` | string | unset | Optional project-specific name used for the Repository Bank in the Hindsight dashboard. |
+| `knowledge.bank.managedConfigMode` | enum | `merge` | Apply the versioned ZZ-owned bank profile or use `inspect-only` to report drift without changing Hindsight. |
+| `knowledge.bank.maxBanksPerUser` | number | `4` | Maximum distinct security boundaries per user; Repository Banks inside an existing boundary do not consume this limit. |
+| `knowledge.recall.quickTokens` | number | `1000` | Duplicate and single-fact recall budget. |
+| `knowledge.recall.normalTokens` | number | `4000` | Ordinary implementation and session-orientation budget. |
+| `knowledge.recall.deepTokens` | number | `10000` | Planning, debugging, and replanning budget. |
+| `knowledge.recall.forensicTokens` | number | `20000` | Complex recovery and conflict-analysis budget. |
+| `knowledge.mentalModels.maxPerRepo` | number | `4` | Maximum repository mental models; runtime hard-caps this at four. |
+| `knowledge.hindsight.apiUrl` | string | `http://127.0.0.1:8888` | Hindsight endpoint used only through the ZZ Knowledge wrapper. |
 
 `compaction` has additional tuning keys (idle compaction, supersede/drop heuristics) visible in `zz config list`. See [Compaction](./compaction.md) for the full strategy reference.
 
@@ -653,6 +665,7 @@ tui:
 | `tui.hyperlinks` | enum | `auto` | `off`, `auto`, `always`. |
 
 For a custom status line, set `statusLine.preset: custom` and configure `statusLine.leftSegments`, `statusLine.rightSegments`, and `statusLine.segmentOptions`.
+The `worktree` segment displays `primary` for the main checkout or the linked worktree directory name for an active Git worktree.
 
 ### Interaction
 
@@ -721,7 +734,7 @@ Provider credentials and custom model definitions are configured separately — 
 
 ### Other groups
 
-`zz config list` exposes many more grouped settings, including: `task.*` (subagent concurrency, isolation, model overrides), `skills.*` and `commands.*` (discovery toggles), `mcp.*`, `github.*`, `async.*`, `goal.*`, `loop.*`, `todo.*`, `magicKeywords.*`, `ttsr.*` (time-traveling stream rules), `display.*`, `startup.*`, `share.*`, `collab.*`, `stt.*`/`tts.*`, `memories.*`/`hindsight.*`/`mnemopi.*` (memory backends), and `bashInterceptor.*`. Each follows the same type/default rules shown above.
+`zz config list` exposes many more grouped settings, including: `task.*` (subagent concurrency, isolation, model overrides), `skills.*` and `commands.*` (discovery toggles), `mcp.*`, `github.*`, `async.*`, `goal.*`, `loop.*`, `todo.*`, `magicKeywords.*`, `ttsr.*` (time-traveling stream rules), `display.*`, `startup.*`, `share.*`, `collab.*`, `stt.*`/`tts.*`, `knowledge.*`, and `bashInterceptor.*`. Each follows the same type/default rules shown above.
 
 ## Legacy migration
 

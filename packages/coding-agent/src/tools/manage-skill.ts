@@ -1,14 +1,9 @@
 import * as path from "node:path";
 import type { AgentTool, AgentToolResult } from "@oh-my-pi/pi-agent-core";
 import { type } from "arktype";
-import {
-	deleteManagedSkill,
-	getManagedSkillsDir,
-	sanitizeSkillName,
-	writeManagedSkill,
-} from "../autolearn/managed-skills";
 import { isNameClaimedByAuthoredSkill } from "../extensibility/skills";
 import manageSkillDescription from "../prompts/tools/manage-skill.md" with { type: "text" };
+import { deleteManagedSkill, getManagedSkillsDir, sanitizeSkillName, writeManagedSkill } from "../skills/managed";
 import type { ToolSession } from ".";
 
 const manageSkillSchema = type({
@@ -32,8 +27,9 @@ const manageSkillSchema = type({
 export type ManageSkillParams = typeof manageSkillSchema.infer;
 
 /**
- * Direct create/update/delete of isolated managed skills. Gated behind
- * `autolearn.enabled`; backend-independent (the skill side is standalone).
+ * Direct create/update/delete of isolated managed skills. Skill management is
+ * independent from knowledge persistence and is exposed with the ZZ Knowledge
+ * operator surface.
  */
 export class ManageSkillTool implements AgentTool<typeof manageSkillSchema> {
 	readonly name = "manage_skill";
@@ -48,7 +44,7 @@ export class ManageSkillTool implements AgentTool<typeof manageSkillSchema> {
 	constructor(private readonly refreshSkills?: () => Promise<void>) {}
 
 	static createIf(session: ToolSession): ManageSkillTool | null {
-		if (!session.settings.get("autolearn.enabled")) return null;
+		if (!session.settings.get("knowledge.enabled")) return null;
 		return new ManageSkillTool(session.refreshSkills);
 	}
 

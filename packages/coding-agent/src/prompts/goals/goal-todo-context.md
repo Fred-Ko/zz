@@ -1,6 +1,6 @@
 <todo_context>
-Current persisted todo state for this goal follows. Goal continuations do not get a visible user nudge, so treat this as live progress state, not old transcript decoration.
-Before continuing substantial work, compare your next action with these todos. If an item is stale, already finished, or no longer the active pointer, call the `todo` tool first to mark it done or rewrite the list. Do not leave a stale in_progress item while working on later phases.
+Current ZZWorkflow Plan DAG projection follows. This Todo view is not authoritative and is read-only while a controlled task is active.
+Before continuing substantial work, compare your next action with the active ZZWorkflow step. Never mutate this list directly. Propose a plan with `zzw_propose_plan`, patch it with `zzw_patch_plan`, and report step outcomes through the ZZW tools.
 
 Overall: {{closed}}/{{total}} done, {{open}} open.
 {{#each phases}}

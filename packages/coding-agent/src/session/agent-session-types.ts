@@ -28,12 +28,8 @@ import type { ConfiguredThinkingLevel } from "../thinking";
 import type { XdevRegistry } from "../tools/xdev";
 import type { SessionManager } from "./session-manager";
 
-/** Maximum time the interactive shutdown path waits for Mnemopi consolidation. */
-export const SHUTDOWN_CONSOLIDATE_BUDGET_MS = 1_500;
-
 /** Options controlling session disposal. */
 export interface AgentSessionDisposeOptions {
-	mnemopiConsolidateTimeoutMs?: number;
 	/**
 	 * Postmortem reason that triggered this dispose (signal/fatal teardown
 	 * paths). When set, the persisted `session_exit` diagnostic records it
@@ -101,6 +97,8 @@ export interface AgentSessionConfig {
 	settings: Settings;
 	/** Whether the caller explicitly requested yolo/auto-approve behavior for this session. */
 	autoApprove?: boolean;
+	/** Whether this session may initialize and expose ZZ Knowledge. */
+	knowledgeEnabled?: boolean;
 	/** Models to cycle through with Ctrl+P (from --models flag). */
 	scopedModels?: Array<{ model: Model; thinkingLevel?: ThinkingLevel }>;
 	/** Initial session thinking selector. */
@@ -128,12 +126,6 @@ export interface AgentSessionConfig {
 	/** Custom TypeScript slash commands. */
 	customCommands?: LoadedCustomCommand[];
 	skillsSettings?: SkillsSettings;
-	/** Agent directory used when changing memory backends in a live session. */
-	memoryAgentDir?: string;
-	/** Recursion depth used to suppress live backend replacement in subagents. */
-	memoryTaskDepth?: number;
-	/** Creates built-in memory tools for the current backend. */
-	createMemoryTools?: () => Promise<AgentTool[]>;
 	/** Creates the built-in `computer` tool for session-scoped runtime enablement (see {@link AgentSession.setComputerToolEnabled}). */
 	createComputerTool?: () => Promise<AgentTool | null>;
 	/** Model registry for API key resolution and model discovery. */

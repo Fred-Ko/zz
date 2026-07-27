@@ -41,6 +41,7 @@ const DISABLE_ALL_BUILTIN_SKILLS = {
 	enablePiProject: false,
 	enableAgentsUser: false,
 	enableAgentsProject: false,
+	enableBundledWorkflow: false,
 } as const;
 
 describe("skills", () => {

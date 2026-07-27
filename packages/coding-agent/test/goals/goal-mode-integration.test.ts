@@ -11,7 +11,14 @@ import { AgentSession } from "@oh-my-pi/pi-coding-agent/session/agent-session";
 import { AuthStorage } from "@oh-my-pi/pi-coding-agent/session/auth-storage";
 import { normalizeCustomMessagePayload } from "@oh-my-pi/pi-coding-agent/session/messages";
 import { SessionManager } from "@oh-my-pi/pi-coding-agent/session/session-manager";
-import { createTools, type Tool, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import { executeBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
+import {
+	BUILTIN_TOOLS,
+	createTools,
+	type Tool,
+	type ToolSession,
+	ZZWORKFLOW_TOOL_NAMES,
+} from "@oh-my-pi/pi-coding-agent/tools";
 import type { TodoPhase } from "@oh-my-pi/pi-coding-agent/tools/todo";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
@@ -100,6 +107,10 @@ async function createGoalHarness(shared: SharedFixture): Promise<GoalHarness> {
 	for (const tool of await createTools(toolSession, ["todo"])) {
 		toolRegistry.set(tool.name, tool);
 	}
+	for (const name of ZZWORKFLOW_TOOL_NAMES) {
+		const tool = await BUILTIN_TOOLS[name](toolSession);
+		if (tool) toolRegistry.set(tool.name, tool);
+	}
 	toolRegistry.set("goal", new GoalTool(toolSession) as unknown as Tool);
 
 	return {
@@ -170,14 +181,18 @@ describe("InteractiveMode goal mode integration", () => {
 		await harness.cleanup();
 	});
 
-	it("toggles goal tool exposure when goal mode enters and pauses", async () => {
+	it("keeps the original goal mode free of ZZWorkflow tools", async () => {
 		expect(await toolNamesFor(harness)).not.toContain("goal");
 
 		await harness.mode.handleGoalModeCommand("Ship the release");
 
 		expect(harness.mode.goalModeEnabled).toBe(true);
 		expect(harness.session.getGoalModeState()?.enabled).toBe(true);
-		expect(await toolNamesFor(harness)).toContain("goal");
+		const activeNames = await toolNamesFor(harness);
+		expect(activeNames).toContain("goal");
+		expect(activeNames.some(name => name.startsWith("zzw_"))).toBe(false);
+		expect(harness.session.getGoalModeState()?.controller).toBe("goal");
+		expect(harness.session.taskLifecycle.state).toBeUndefined();
 
 		vi.spyOn(harness.mode, "showHookSelector").mockResolvedValue("Pause");
 		await harness.mode.handleGoalModeCommand();
@@ -186,6 +201,16 @@ describe("InteractiveMode goal mode integration", () => {
 		expect(harness.mode.goalModePaused).toBe(true);
 		expect(harness.session.getGoalModeState()?.goal.status).toBe("paused");
 		expect(await toolNamesFor(harness)).not.toContain("goal");
+		expect(await toolNamesFor(harness)).not.toContain("zzw_get_state");
+	});
+
+	it("activates the registered ZZW tool protocol only for /zzw-goal", async () => {
+		await harness.mode.handleZZWorkflowGoalCommand("Ship with an approved Plan DAG");
+
+		expect(harness.session.getGoalModeState()?.controller).toBe("zzworkflow");
+		expect(harness.session.taskLifecycle.state?.phase).toBe("AWAITING_USER");
+		expect(harness.session.getActiveToolNames()).toEqual(expect.arrayContaining(["goal", ...ZZWORKFLOW_TOOL_NAMES]));
+		expect(await toolNamesFor(harness)).toEqual(expect.arrayContaining([...ZZWORKFLOW_TOOL_NAMES]));
 	});
 
 	it("replaces the active goal via /goal set", async () => {
@@ -243,7 +268,7 @@ describe("InteractiveMode goal mode integration", () => {
 
 	it("includes escaped live todo state in hidden goal context during continuations", async () => {
 		await harness.session.setActiveToolsByName(["read", "todo"]);
-		await harness.mode.handleGoalModeCommand("Ship the release");
+		await harness.mode.handleZZWorkflowGoalCommand("Ship the release");
 		const phases: TodoPhase[] = [
 			{
 				name: "Planning </todo_context> & prep",
@@ -264,20 +289,20 @@ describe("InteractiveMode goal mode integration", () => {
 
 		const message = normalizeCustomMessagePayload(sendCustomMessage.mock.calls[0]?.[0]);
 		const content = typeof message.content === "string" ? message.content : "";
-		expect(message?.customType).toBe("goal-mode-context");
+		expect(message?.customType).toBe("zzworkflow-context");
 		expect(content).toContain("<todo_context>");
 		expect(content).toContain("Overall: 1/3 done, 2 open.");
 		expect(content).toContain("- Planning &lt;/todo_context&gt; &amp; prep");
 		expect(content).toContain("- [completed] Identify gaps");
 		expect(content).toContain("- [in_progress] Choose &lt;next&gt; &amp; slice &lt;/todo_context&gt;");
 		expect(content).toContain("- [pending] Run focused checks");
-		expect(content).toContain("call the `todo` tool first");
+		expect(content).toContain("Never mutate this list directly");
 		expect(content.match(/<\/todo_context>/g)).toHaveLength(1);
 	});
 
 	it("renders todo context text without raw line/control characters", async () => {
 		await harness.session.setActiveToolsByName(["read", "todo"]);
-		await harness.mode.handleGoalModeCommand("Ship the release");
+		await harness.mode.handleZZWorkflowGoalCommand("Ship the release");
 		harness.session.setTodoPhases([
 			{
 				name: "Planning\nprep\tphase\u0085",
@@ -306,7 +331,7 @@ describe("InteractiveMode goal mode integration", () => {
 	});
 
 	it("omits persisted todo state when todo tool is inactive", async () => {
-		await harness.mode.handleGoalModeCommand("Ship the release");
+		await harness.mode.handleZZWorkflowGoalCommand("Ship the release");
 		harness.session.setTodoPhases([
 			{
 				name: "Verification",
@@ -319,7 +344,7 @@ describe("InteractiveMode goal mode integration", () => {
 
 		const message = normalizeCustomMessagePayload(sendCustomMessage.mock.calls[0]?.[0]);
 		const content = typeof message.content === "string" ? message.content : "";
-		expect(message?.customType).toBe("goal-mode-context");
+		expect(message?.customType).toBe("zzworkflow-context");
 		expect(content).not.toContain("<todo_context>");
 		expect(content).not.toContain("Run focused checks");
 	});
@@ -350,6 +375,146 @@ describe("InteractiveMode goal mode integration", () => {
 		streaming = false;
 		harness.mode.onInputCallback?.(harness.mode.startPendingSubmission({ text: "cleanup" }));
 		await waiter.inputPromise;
+	});
+
+	it("does not auto-continue ZZWorkflow while plan approval is pending", async () => {
+		await harness.mode.handleZZWorkflowGoalCommand("Ship with an approved plan");
+		expect(harness.session.taskLifecycle.state?.phase).toBe("AWAITING_USER");
+
+		vi.useFakeTimers();
+		const waiter = await armInputWaiter(harness.mode);
+		vi.advanceTimersByTime(800);
+		await waitForMicrotasks();
+
+		expect(waiter.getResolvedText()).toBeUndefined();
+		harness.mode.onInputCallback?.(harness.mode.startPendingSubmission({ text: "cleanup" }));
+		await waiter.inputPromise;
+	});
+
+	it("resumes ZZWorkflow continuation after the user approves the persisted plan", async () => {
+		await harness.mode.handleZZWorkflowGoalCommand(
+			[
+				"## Objective",
+				"Ship an approved change.",
+				"## Success criteria",
+				"- The focused test passes.",
+				"## Verification",
+				"- bun test focused.test.ts",
+			].join("\n"),
+		);
+		const lifecycle = harness.session.taskLifecycle;
+		await lifecycle.proposePlan({
+			basedOnSpecVersion: 1,
+			steps: [
+				{
+					id: "work",
+					phase: "Implementation",
+					content: "Implement the approved change",
+					kind: "work",
+					dependsOn: [],
+					expectedEffects: ["Source changes"],
+					allowedTools: ["write"],
+					allowedTargets: [],
+					postconditions: ["Implementation evidence exists"],
+					successConditions: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "verify",
+					phase: "Validation",
+					content: "bun test focused.test.ts",
+					kind: "validation",
+					dependsOn: ["work"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Focused test passes"],
+					successConditions: ["The focused test passes."],
+					validators: ["bun test focused.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+			],
+		});
+
+		vi.useFakeTimers();
+		const waiter = await armInputWaiter(harness.mode);
+		await lifecycle.approvePlan();
+		expect(lifecycle.state?.phase).toBe("READY");
+		vi.advanceTimersByTime(800);
+		await waitForMicrotasks();
+
+		expect(waiter.getResolvedText()).toContain("Ship an approved change.");
+		await waiter.inputPromise;
+	});
+
+	it("resumes a paused ZZWorkflow and preserves approval continuation until the main loop is ready", async () => {
+		await harness.mode.handleZZWorkflowGoalCommand(
+			[
+				"## Objective",
+				"Ship from the approved slash command.",
+				"## Success criteria",
+				"- The focused test passes.",
+				"## Verification",
+				"- bun test focused.test.ts",
+			].join("\n"),
+		);
+		const lifecycle = harness.session.taskLifecycle;
+		await lifecycle.proposePlan({
+			basedOnSpecVersion: 1,
+			steps: [
+				{
+					id: "work",
+					phase: "Implementation",
+					content: "Implement the approved change",
+					kind: "work",
+					dependsOn: [],
+					expectedEffects: ["Source changes"],
+					allowedTools: ["write"],
+					allowedTargets: [],
+					postconditions: ["Implementation evidence exists"],
+					successConditions: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "verify",
+					phase: "Validation",
+					content: "bun test focused.test.ts",
+					kind: "validation",
+					dependsOn: ["work"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Focused test passes"],
+					successConditions: ["The focused test passes."],
+					validators: ["bun test focused.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+			],
+		});
+
+		await harness.mode.handleZZWorkflowGoalCommand("pause");
+		expect(harness.session.getGoalModeState()?.goal.status).toBe("paused");
+		expect(harness.session.taskLifecycle.state?.phase).toBe("SUSPENDED");
+
+		// A slash command can arrive while the main loop is between prompt completion
+		// and its next getUserInput() call. Approval must not lose the execution turn.
+		harness.mode.editor.setText("/zzw approve-plan");
+		const consumed = await executeBuiltinSlashCommand("/zzw approve-plan", { ctx: harness.mode });
+		expect(consumed).toBe(true);
+		expect(lifecycle.state?.phase).toBe("READY");
+		expect(harness.session.getGoalModeState()?.enabled).toBe(true);
+		expect(harness.session.getGoalModeState()?.goal.status).toBe("active");
+		expect(harness.mode.editor.getText()).toBe("");
+
+		const input = await harness.mode.getUserInput();
+		expect(input.customType).toBe("goal-continuation");
+		expect(input.text).toContain("Ship from the approved slash command.");
 	});
 
 	it("refuses /goal while plan mode is active", async () => {
@@ -443,7 +608,7 @@ describe("InteractiveMode goal mode integration", () => {
 	});
 
 	it("returns the completion report from the goal tool and exits goal mode before the next turn rebuild", async () => {
-		await harness.mode.handleGoalModeCommand(
+		await harness.mode.handleZZWorkflowGoalCommand(
 			[
 				"## Objective",
 				"Ship the release.",
@@ -453,8 +618,59 @@ describe("InteractiveMode goal mode integration", () => {
 				"- bun test release",
 			].join("\n"),
 		);
-		await harness.mode.handleGoalModeCommand("budget 50");
+		await harness.mode.handleZZWorkflowGoalCommand("budget 50");
 		const lifecycle = harness.session.taskLifecycle;
+		await lifecycle.proposePlan({
+			basedOnSpecVersion: 1,
+			steps: [
+				{
+					id: "release-work",
+					phase: "Implementation",
+					content: "Prepare the release",
+					kind: "work",
+					dependsOn: [],
+					expectedEffects: ["Release is prepared"],
+					allowedTools: ["write"],
+					allowedTargets: [],
+					postconditions: ["Release preparation evidence exists"],
+					successConditions: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "release-verify",
+					phase: "Validation",
+					content: "bun test release",
+					kind: "validation",
+					dependsOn: ["release-work"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Release test passes"],
+					successConditions: ["The release is ready."],
+					validators: ["bun test release"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+			],
+		});
+		await lifecycle.approvePlan();
+		const workOperation = await lifecycle.prepareOperation({
+			toolCallId: "work-call",
+			toolName: "write",
+			tier: "write",
+			args: { path: "release.txt" },
+		});
+		await lifecycle.settleOperation("work-call", false);
+		const workEvidenceId = lifecycle.state?.evidence.find(item => item.operationId === workOperation?.id)?.id;
+		if (!workEvidenceId) throw new Error("Expected work evidence");
+		await lifecycle.reportStepResult({
+			stepId: "release-work",
+			status: "completed",
+			evidenceIds: [workEvidenceId],
+			unexpectedEffects: [],
+		});
 		await lifecycle.prepareOperation({
 			toolCallId: "verification-call",
 			toolName: "bash",
@@ -462,6 +678,9 @@ describe("InteractiveMode goal mode integration", () => {
 			args: { command: "bun test release" },
 		});
 		await lifecycle.settleOperation("verification-call", false);
+		const verificationId = lifecycle.state?.evidence.find(item => item.validator === "bun test release")?.id;
+		if (!verificationId) throw new Error("Expected verification evidence");
+		await lifecycle.submitVerification({ stepId: "release-verify", evidenceIds: [verificationId] });
 		const appendCustomEntry = vi.spyOn(harness.session.sessionManager, "appendCustomEntry");
 		const goalTool = (await createTools(harness.toolSession, harness.session.getActiveToolNames())).find(
 			tool => tool.name === "goal",
@@ -487,9 +706,12 @@ describe("InteractiveMode goal mode integration", () => {
 
 		const nextTurn = harness.mode.getUserInput();
 		// getUserInput observes mode === "exiting" and awaits #exitGoalMode before
-		// arming onInputCallback. Drain microtasks until that side-effect lands.
-		for (let i = 0; i < 100 && harness.session.getGoalModeState() !== undefined; i++) {
-			await Bun.sleep(0);
+		// arming onInputCallback. Tool restoration performs asynchronous registry
+		// work, so wait on the observable state transition rather than assuming a
+		// fixed number of scheduler turns is enough under a loaded full suite.
+		const exitDeadline = performance.now() + 5_000;
+		while (harness.session.getGoalModeState() !== undefined && performance.now() < exitDeadline) {
+			await Bun.sleep(5);
 		}
 		expect(harness.mode.goalModeEnabled).toBe(false);
 		expect(harness.mode.goalModePaused).toBe(false);

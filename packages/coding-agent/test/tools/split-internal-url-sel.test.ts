@@ -5,7 +5,6 @@ describe("splitInternalUrlSel", () => {
 	it("returns the input unchanged when there is no selector tail", () => {
 		expect(splitInternalUrlSel("artifact://3")).toEqual({ path: "artifact://3" });
 		expect(splitInternalUrlSel("agent://reviewer_0")).toEqual({ path: "agent://reviewer_0" });
-		expect(splitInternalUrlSel("memory://root")).toEqual({ path: "memory://root" });
 	});
 
 	it("peels a single line-range selector", () => {

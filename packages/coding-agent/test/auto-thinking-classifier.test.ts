@@ -23,7 +23,7 @@ import {
 	resolveProvisionalAutoLevel,
 	resolveTaskEffortLevel,
 } from "@oh-my-pi/pi-coding-agent/thinking";
-import type { TinyMemoryLocalModelKey } from "@oh-my-pi/pi-coding-agent/tiny/models";
+import type { TinyClassifierLocalModelKey } from "@oh-my-pi/pi-coding-agent/tiny/models";
 import { tinyModelClient } from "@oh-my-pi/pi-coding-agent/tiny/title-client";
 import { TempDir } from "@oh-my-pi/pi-utils";
 
@@ -40,7 +40,7 @@ describe("auto thinking classifier helpers", () => {
 	}
 
 	async function createLocalClassifierFixture(
-		autoThinkingModel: TinyMemoryLocalModelKey,
+		autoThinkingModel: TinyClassifierLocalModelKey,
 	): Promise<LocalClassifierFixture> {
 		const tempDir = TempDir.createSync("@pi-auto-thinking-classifier-");
 		const authStorage = await AuthStorage.create(path.join(tempDir.path(), "auth.db"));

@@ -6,7 +6,7 @@
  * {@link Effort.Low}). Two backends, selected by `providers.autoThinkingModel`:
  *
  * - `online` (default): a smol model classifies into `low|medium|high|xhigh`.
- * - a local key: an on-device memory model classifies into the coarser
+ * - a local key: an on-device classifier model classifies into the coarser
  *   `trivial|moderate|hard` scheme (3-class is more reliable than 4-way ordinal
  *   on sub-2B models), mapped to `low|high|xhigh`.
  *
@@ -24,8 +24,8 @@ import difficultyLocalPrompt from "../prompts/system/auto-thinking-difficulty-lo
 import { clampAutoThinkingEffort } from "../thinking";
 import { preprocessTinyMessage } from "../tiny/message-preproc";
 import {
-	isTinyMemoryLocalModelKey,
-	isTinyMemoryReasoningModelKey,
+	isTinyClassifierLocalModelKey,
+	isTinyClassifierReasoningModelKey,
 	ONLINE_AUTO_THINKING_MODEL_KEY,
 } from "../tiny/models";
 import { tinyModelClient } from "../tiny/title-client";
@@ -113,10 +113,10 @@ async function classifyOnline(input: string, deps: ClassifyDifficultyDeps): Prom
 }
 
 async function classifyLocal(input: string, modelKey: string, deps: ClassifyDifficultyDeps): Promise<Effort> {
-	if (!isTinyMemoryLocalModelKey(modelKey)) {
+	if (!isTinyClassifierLocalModelKey(modelKey)) {
 		throw new Error(`auto-thinking: unsupported local classifier model: ${modelKey}`);
 	}
-	const maxTokens = isTinyMemoryReasoningModelKey(modelKey)
+	const maxTokens = isTinyClassifierReasoningModelKey(modelKey)
 		? Math.max(LOCAL_ANSWER_MAX_TOKENS, REASONING_SAFE_MAX_TOKENS)
 		: LOCAL_ANSWER_MAX_TOKENS;
 	const builtPrompt = prompt.render(difficultyLocalPrompt, { prompt: input });

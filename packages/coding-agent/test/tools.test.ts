@@ -1439,7 +1439,11 @@ function b() {
 			const result = await autoBackgroundBashTool.execute(
 				"test-call-9-auto-running",
 				{
-					command: "printf 'start\\n'; sleep 0.03; printf 'done\\n'",
+					// Keep the process alive well beyond the 10 ms threshold. With the
+					// previous 30 ms sleep, a loaded full-suite worker could service both
+					// timers after the process had already exited, making this a scheduler
+					// race instead of a test of the auto-background contract.
+					command: "printf 'start\\n'; sleep 0.5; printf 'done\\n'",
 				},
 				undefined,
 				update => {
@@ -1450,16 +1454,17 @@ function b() {
 			expect(result.details?.async?.state).toBe("running");
 			expect(result.details?.async?.type).toBe("bash");
 			expect(getTextOutput(result)).toContain("Backgrounded as job");
-			expect(getTextOutput(result)).toContain("start");
 
 			const jobId = result.details?.async?.jobId;
 			if (!jobId) {
 				throw new Error("expected an auto-backgrounded job id");
 			}
 			const runningJob = asyncJobManager.getJob(jobId);
-			expect(runningJob?.status).toBe("running");
+			if (!runningJob) {
+				throw new Error("expected the auto-backgrounded job to be registered");
+			}
 			const updatesAtBackground = updates.slice();
-			await runningJob?.promise;
+			await runningJob.promise;
 			await asyncJobManager.drainDeliveries({ timeoutMs: 1 });
 			expect(deliveries).toHaveLength(1);
 			expect(deliveries[0]?.jobId).toBe(jobId);

@@ -5,7 +5,7 @@
 ## Source
 - Entry: `packages/coding-agent/src/tools/manage-skill.ts`
 - Model-facing prompt: `packages/coding-agent/src/prompts/tools/manage-skill.md`
-- Managed-skill helper: `packages/coding-agent/src/autolearn/managed-skills.ts`
+- Managed-skill helper: `packages/coding-agent/src/skills/managed.ts`
 - Skill discovery: `packages/coding-agent/src/extensibility/skills.ts`
 
 ## Inputs
@@ -24,7 +24,7 @@
 - Authored-skill shadowing on create returns `isError: true` with `details = { action: "create", name, shadowed: true }`.
 
 ## Flow
-1. `ManageSkillTool.createIf(...)` exposes the tool only when `autolearn.enabled` is true.
+1. `ManageSkillTool.createIf(...)` exposes the tool only when `knowledge.enabled` is true.
 2. Schema validation requires `description` and `body` for `create` / `update`; `delete` needs only `name`.
 3. `delete` calls `deleteManagedSkill(name)` and returns.
 4. `create` checks whether an authored skill already owns the sanitized name; if yes, it refuses because managed skills cannot override authored skills.
@@ -38,11 +38,11 @@
 ## Side Effects
 - Filesystem: writes or deletes files under `~/.zz/agent/managed-skills`.
 - Network: none.
-- Session state: only reads `autolearn.enabled` during tool creation.
+- Session state: only reads `knowledge.enabled` during tool creation.
 - Background work: none.
 
 ## Limits & Caps
-- Availability requires `autolearn.enabled`.
+- Availability requires `knowledge.enabled`.
 - Names must match lowercase letters, digits, and hyphens, 1–64 chars, starting with a letter or digit.
 - Descriptions are sanitized to one line and stripped of prompt-breaking control chars, angle brackets, backticks, and repeated tildes.
 - Final managed `SKILL.md` content is capped at `64_000` UTF-8 bytes.

@@ -1,11 +1,6 @@
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import { getProjectDir, prompt } from "@oh-my-pi/pi-utils";
-import {
-	isValidManagedSkillName,
-	MANAGED_SKILLS_PROVIDER_ID,
-	sanitizeManagedDescription,
-} from "../autolearn/managed-skills";
 import { skillCapability } from "../capability/skill";
 import type { SourceMeta } from "../capability/types";
 import type { SkillsSettings } from "../config/settings";
@@ -14,6 +9,7 @@ import { compareSkillOrder, scanSkillsFromDir } from "../discovery/helpers";
 import autoloadTemplate from "../prompts/skills/autoload.md" with { type: "text" };
 import userInvocationTemplate from "../prompts/skills/user-invocation.md" with { type: "text" };
 import type { SkillPromptDetails } from "../session/messages";
+import { isValidManagedSkillName, MANAGED_SKILLS_PROVIDER_ID, sanitizeManagedDescription } from "../skills/managed";
 import { expandTilde } from "../tools/path-utils";
 export interface Skill {
 	name: string;
@@ -21,6 +17,8 @@ export interface Skill {
 	filePath: string;
 	baseDir: string;
 	source: string;
+	/** In-bundle body for skills whose source file is not present at runtime. */
+	content?: string;
 	/**
 	 * When `true`, the skill is loaded and reachable via `skill://<name>` and
 	 * (when enabled) `/skill:<name>`, but is excluded from the rendered system
@@ -64,7 +62,7 @@ export function resetActiveSkillsForTests(): void {
 /**
  * Whether `name` is already claimed by an active authored (non-managed) skill.
  *
- * Managed (auto-learn) skills resolve dead-last in discovery, so an authored
+ * Managed skills resolve dead-last in discovery, so an authored
  * skill of the same name always wins (see `loadSkills`) and a managed skill
  * written under an authored name is silently dropped — it never surfaces.
  * `manage_skill` create consults this to refuse the write up front instead of
@@ -114,6 +112,10 @@ export async function loadSkillsFromDir(options: LoadSkillsFromDirOptions): Prom
 export interface LoadSkillsOptions extends SkillsSettings {
 	/** Working directory for project-local skills. Default: getProjectDir() */
 	cwd?: string;
+	/** Expose the bundled Knowledge operator only when ZZ Knowledge is active. */
+	enableBundledKnowledge?: boolean;
+	/** Expose the bundled ZZWorkflow operating skills. */
+	enableBundledWorkflow?: boolean;
 }
 
 /**
@@ -135,6 +137,8 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 		ignoredSkills = [],
 		includeSkills = [],
 		disabledExtensions = [],
+		enableBundledKnowledge = false,
+		enableBundledWorkflow = true,
 	} = options;
 
 	// Early return if skills are disabled
@@ -154,10 +158,11 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 
 	function isSourceEnabled(source: SourceMeta): boolean {
 		const { provider, level } = source;
-		// Managed skills (auto-learn) are OMP-native and discovered unconditionally
-		// — third-party CLI toggles must never silently hide them (cf. #2401). The
-		// master `enabled` flag above still gates them.
+		// ZZ-owned providers are discovered independently of third-party CLI
+		// toggles. The master `enabled` flag above still gates them.
 		if (provider === MANAGED_SKILLS_PROVIDER_ID) return true;
+		if (provider === "zz-bundled") return enableBundledKnowledge;
+		if (provider === "zzw-bundled") return enableBundledWorkflow;
 		if (provider === "codex" && level === "user") return enableCodexUser;
 		if (provider === "claude" && level === "user") return enableClaudeUser;
 		if (provider === "claude" && level === "project") return enableClaudeProject;
@@ -239,6 +244,7 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 				filePath: capSkill.path,
 				baseDir: capSkill.path.replace(/[\\/]SKILL\.md$/, ""),
 				source: `${capSkill._source.provider}:${capSkill.level}`,
+				content: capSkill.content,
 				hide: capSkill.frontmatter?.hide === true || capSkill.frontmatter?.disableModelInvocation === true,
 				_source: capSkill._source,
 			});
@@ -312,7 +318,7 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 		}
 	}
 
-	// Managed (auto-learn) skills resolve dead-last with first-wins. Source from
+	// Explicitly managed skills resolve dead-last with first-wins. Source from
 	// result.all (pre-dedup): capability-level dedup runs BEFORE isSourceEnabled,
 	// so a managed skill can be shadowed by a higher-priority authored skill that
 	// is itself disabled here — managed must stay visible regardless of toggles.

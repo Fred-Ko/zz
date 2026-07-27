@@ -1,16 +1,24 @@
 import { logger } from "@oh-my-pi/pi-utils";
 import type { Settings } from "../config/settings";
-import type { TaskLifecycleMemory, TaskLifecycleState, TaskOperation } from "../goals/task-lifecycle";
-import { createHindsightClient } from "../hindsight/client";
-import { isHindsightConfigured, loadHindsightConfig } from "../hindsight/config";
-import { WorkflowMemoryGateway } from "../hindsight/gateway";
+import type { TaskLifecycleState, TaskOperation } from "../goals/task-lifecycle";
+import {
+	createKnowledgeRuntime,
+	type KnowledgeIdentity,
+	type KnowledgeReviewRequest,
+	type KnowledgeRuntime,
+} from "../knowledge";
+import sessionOrientationQueryPrompt from "../prompts/knowledge/session-orientation-query.md" with { type: "text" };
 import * as git from "../utils/git";
-import { isWorkflowConfigured, loadWorkflowConfig, type WorkflowConfig } from "./config";
-import { WorkflowCoordinatorClient, WorkspaceLeaseConflictError, type WorkspaceLeaseInput } from "./coordinator";
-import { loadOrCreateMachineId, resolveRepositoryIdentity } from "./identity";
-import { WorkflowStore } from "./store";
+import { loadZZWorkflowConfig, type ZZWorkflowConfig } from "./config";
+import { resolveRepositoryIdentity } from "./identity";
+import {
+	type LocalWorkspaceLeaseInput,
+	openRepositoryZZWorkflowStore,
+	WorkspaceLeaseConflictError,
+	type ZZWorkflowStore,
+} from "./store";
 
-export type WorkflowSyncReason =
+export type ZZWorkflowSyncReason =
 	| "created"
 	| "replaced"
 	| "revised"
@@ -24,28 +32,26 @@ export type WorkflowSyncReason =
 	| "completed"
 	| "abandoned";
 
-export type WorkflowRecallStage = "intake" | "planning" | "recovery";
+export type ZZWorkflowRecallStage = "intake" | "planning" | "recovery";
 
-export interface WorkflowIntegrationOptions {
+export interface ZZWorkflowIntegrationOptions {
 	settings: Settings;
+	knowledgeEnabled: boolean;
 	getCwd(): string;
 	getSessionId(): string;
 	redact?(content: string): string;
 }
 
-interface WorkflowServices {
-	config: WorkflowConfig;
-	machineId: string;
-	store: WorkflowStore;
-	coordinator?: WorkflowCoordinatorClient;
-	memory?: WorkflowMemoryGateway;
+interface ZZWorkflowServices {
+	config: ZZWorkflowConfig;
+	store: ZZWorkflowStore;
+	knowledge: KnowledgeRuntime;
+	repoId: string;
 }
 
-interface SharedCheckpoint {
-	remote: string;
-	ref: string;
+interface LocalCheckpoint {
 	commit: string;
-	unsharedLocalChanges: boolean;
+	untrackedChanges: boolean;
 }
 
 function eventId(value: unknown): string {
@@ -61,319 +67,318 @@ function isTerminalOrSuspended(state: TaskLifecycleState): boolean {
 	);
 }
 
-function additionalCoordinatorPath(state: TaskLifecycleState, reason: WorkflowSyncReason): string | undefined {
-	switch (reason) {
-		case "revised":
-			return `/v1/tasks/${encodeURIComponent(state.taskId)}/specs`;
-		case "episode-started":
-			return "/v1/episodes";
-		case "plan-updated":
-			return `/v1/plans/${encodeURIComponent(state.taskId)}/patch`;
-		case "paused":
-		case "handoff":
-			return "/v1/checkpoints";
-		case "completed":
-			return "/v1/verifications";
-		default:
-			return undefined;
-	}
-}
-
-function checkpointReason(reason: WorkflowSyncReason): boolean {
+function checkpointReason(reason: ZZWorkflowSyncReason): boolean {
 	return reason === "plan-updated" || reason === "paused" || reason === "handoff" || reason === "completed";
 }
 
-function refSegment(value: string): string {
-	return value.replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^-+|-+$/g, "") || "unknown";
-}
-
-export class WorkflowIntegration {
-	readonly #options: WorkflowIntegrationOptions;
-	readonly #services: Promise<WorkflowServices | undefined>;
+export class ZZWorkflowIntegration {
+	readonly #options: ZZWorkflowIntegrationOptions;
+	#services: Promise<ZZWorkflowServices>;
 	#state: TaskLifecycleState | undefined;
 	#leaseExpiresAt = 0;
 	#heartbeatTimer: Timer | undefined;
+	#sessionOrientation: Promise<string | undefined> | undefined;
 	#closed = false;
 
-	constructor(options: WorkflowIntegrationOptions) {
+	constructor(options: ZZWorkflowIntegrationOptions) {
 		this.#options = options;
 		this.#services = this.#initialize();
+		if (options.knowledgeEnabled) {
+			void this.getSessionKnowledgeContext().catch(error => {
+				logger.debug("ZZ knowledge session orientation unavailable", { error: String(error) });
+			});
+		}
 	}
 
-	async #initialize(): Promise<WorkflowServices | undefined> {
-		const workflowConfig = loadWorkflowConfig(this.#options.settings);
-		const hindsightConfig = loadHindsightConfig(this.#options.settings);
-		const workflowMemory =
-			this.#options.settings.get("memory.backend") === "hindsight" &&
-			hindsightConfig.integrationMode === "workflow-managed" &&
-			isHindsightConfigured(hindsightConfig);
-		if (!isWorkflowConfigured(workflowConfig) && !workflowMemory) return undefined;
+	async #initialize(): Promise<ZZWorkflowServices> {
+		const repository = await resolveRepositoryIdentity(this.#options.getCwd());
+		return this.#openServices(repository.repositoryId, repository.displayName, repository.source);
+	}
 
-		const [machineId, repository] = await Promise.all([
-			loadOrCreateMachineId(workflowConfig.machineIdFile),
-			resolveRepositoryIdentity(this.#options.getCwd()),
-		]);
-		const store = new WorkflowStore();
-		const coordinator = isWorkflowConfigured(workflowConfig)
-			? new WorkflowCoordinatorClient(workflowConfig)
-			: undefined;
-		const memory = workflowMemory
-			? new WorkflowMemoryGateway({
-					client: createHindsightClient(hindsightConfig),
-					config: hindsightConfig,
-					store,
-					machineId,
-					sessionId: this.#options.getSessionId(),
-					episodeId: () => this.#state?.episodeId,
-					redact: this.#options.redact,
-				})
-			: undefined;
-		if (memory) void memory.flushOutbox();
-		if (coordinator) void coordinator.flush(store);
-		logger.debug("Workflow integration initialized", {
-			coordinator: coordinator !== undefined,
-			memory: memory !== undefined,
-			repoId: repository.repositoryId,
+	async #openServices(
+		repositoryId: string,
+		displayName: string,
+		source: "project-config" | "canonical-remote" | "local-path",
+	): Promise<ZZWorkflowServices> {
+		const workflowConfig = loadZZWorkflowConfig(this.#options.settings);
+		const opened = openRepositoryZZWorkflowStore(repositoryId, this.#options.settings.getAgentDir());
+		const store = opened.store;
+		const knowledge = createKnowledgeRuntime({
+			settings: this.#options.settings,
+			agentDir: this.#options.settings.getAgentDir(),
+			repoId: repositoryId,
+			repositoryDisplayName: displayName,
+			repositoryNameSource:
+				source === "canonical-remote" ? "remote" : source === "local-path" ? "local-directory" : "project-config",
+			enabled: this.#options.knowledgeEnabled,
+			redact: this.#options.redact,
 		});
-		return { config: workflowConfig, machineId, store, coordinator, memory };
+		logger.debug("Local ZZWorkflow integration initialized", {
+			databasePath: opened.databasePath,
+			databaseSource: opened.source,
+			knowledge: (await knowledge.status()).enabled,
+			migration: opened.migration,
+			repoId: repositoryId,
+		});
+		return { config: workflowConfig, store, knowledge, repoId: repositoryId };
 	}
 
-	#leaseInput(services: WorkflowServices, state: TaskLifecycleState): WorkspaceLeaseInput {
+	async #servicesFor(state?: TaskLifecycleState): Promise<ZZWorkflowServices> {
+		const repository = await resolveRepositoryIdentity(this.#options.getCwd());
+		const expectedRepoId = state?.workspace.repoId || repository.repositoryId;
+		this.#services = this.#services.then(async current => {
+			if (current.repoId === expectedRepoId || this.#closed) return current;
+			this.#stopHeartbeat();
+			if (this.#state) current.store.releaseLease(this.#leaseInput(current, this.#state));
+			await current.knowledge.close();
+			current.store.close();
+			this.#leaseExpiresAt = 0;
+			this.#sessionOrientation = undefined;
+			const displayName = repository.repositoryId === expectedRepoId ? repository.displayName : expectedRepoId;
+			const source = repository.repositoryId === expectedRepoId ? repository.source : "local-path";
+			logger.info("Repository identity changed; rebinding local ZZWorkflow and Knowledge stores", {
+				fromRepoId: current.repoId,
+				toRepoId: expectedRepoId,
+			});
+			return this.#openServices(expectedRepoId, displayName, source);
+		});
+		return this.#services;
+	}
+
+	async getKnowledgeRuntime(): Promise<KnowledgeRuntime | undefined> {
+		if (this.#closed) return undefined;
+		return (await this.#servicesFor()).knowledge;
+	}
+
+	getSessionKnowledgeContext(): Promise<string | undefined> {
+		if (this.#closed) return Promise.resolve(undefined);
+		if (this.#sessionOrientation) return this.#sessionOrientation;
+		this.#sessionOrientation = this.#loadSessionKnowledgeContext();
+		return this.#sessionOrientation;
+	}
+
+	async #loadSessionKnowledgeContext(): Promise<string | undefined> {
+		const services = await this.#servicesFor();
+		if (this.#closed) return undefined;
+		const result = await services.knowledge.recall({
+			purpose: "session-orientation",
+			query: sessionOrientationQueryPrompt.trim(),
+			scope: { global: true, repo: true },
+			depth: "normal",
+			identity: {
+				repoId: services.repoId,
+				sessionId: this.#options.getSessionId(),
+			},
+		});
+		return result.content;
+	}
+
+	#knowledgeIdentity(state: TaskLifecycleState): KnowledgeIdentity {
+		return {
+			repoId: state.workspace.repoId,
+			taskId: state.taskId,
+			branchId: state.workspace.branch ?? undefined,
+			attemptId: state.attemptId,
+			sessionId: state.sessionId,
+			episodeId: state.episodeId,
+			commitHash: state.workspace.headCommit ?? undefined,
+			specVersion: state.specVersion,
+			planVersion: state.planVersion,
+		};
+	}
+
+	#leaseInput(services: ZZWorkflowServices, state: TaskLifecycleState): LocalWorkspaceLeaseInput {
 		return {
 			workspaceId: state.workspaceId,
 			taskId: state.taskId,
 			attemptId: state.attemptId,
 			episodeId: state.episodeId,
-			machineId: services.machineId,
 			leaseMs: services.config.workspaceLeaseMs,
 		};
 	}
 
-	#startHeartbeat(services: WorkflowServices): void {
-		if (!services.coordinator || this.#heartbeatTimer || this.#closed) return;
+	#startHeartbeat(services: ZZWorkflowServices): void {
+		if (this.#heartbeatTimer || this.#closed) return;
 		this.#heartbeatTimer = setInterval(() => {
 			const current = this.#state;
 			if (!current || isTerminalOrSuspended(current)) return;
-			void services.coordinator
-				?.heartbeat(current.episodeId, services.machineId)
-				.then(() => {
-					this.#leaseExpiresAt = Date.now() + services.config.workspaceLeaseMs;
-				})
-				.catch(error => {
-					logger.debug("Workflow heartbeat unavailable", { error: String(error), taskId: current.taskId });
-				});
+			try {
+				if (!services.store.heartbeat(current.episodeId)) {
+					this.#leaseExpiresAt = 0;
+					this.#stopHeartbeat();
+					logger.warn("Local ZZWorkflow lease heartbeat stopped because ownership was lost", {
+						taskId: current.taskId,
+					});
+					return;
+				}
+				this.#leaseExpiresAt = Date.now() + services.config.workspaceLeaseMs;
+			} catch (error) {
+				logger.warn("Local ZZWorkflow heartbeat failed", { error: String(error), taskId: current.taskId });
+			}
 		}, services.config.heartbeatIntervalMs);
 		this.#heartbeatTimer.unref();
 	}
 
-	async #shareCheckpoint(
-		services: WorkflowServices,
+	#stopHeartbeat(): void {
+		if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
+		this.#heartbeatTimer = undefined;
+	}
+
+	async #captureCheckpoint(
 		state: TaskLifecycleState,
-		reason: WorkflowSyncReason,
-	): Promise<SharedCheckpoint | undefined> {
-		const remote = services.config.checkpointRemote;
+		reason: ZZWorkflowSyncReason,
+	): Promise<LocalCheckpoint | undefined> {
 		const repoRoot = state.workspace.repoRoot;
 		const headCommit = state.workspace.headCommit;
-		if (!remote || !repoRoot || !headCommit || !checkpointReason(reason)) return undefined;
-		const ref = `refs/heads/agent/${refSegment(state.taskId)}/${refSegment(state.attemptId)}`;
+		if (!repoRoot || !headCommit || !checkpointReason(reason)) return undefined;
 		try {
 			const summary = await git.status.summary(repoRoot);
-			const checkpointCommit =
+			const commit =
 				state.workspace.dirtyTreeHash === null
 					? headCommit
-					: ((await git.stash.create(repoRoot, `ZZ checkpoint ${state.checkpointId}`)) ?? headCommit);
-			await git.push(repoRoot, { remote, refspec: `${checkpointCommit}:${ref}` });
+					: ((await git.stash.create(repoRoot, `ZZ local checkpoint ${state.checkpointId}`)) ?? headCommit);
 			return {
-				remote,
-				ref,
-				commit: checkpointCommit,
-				unsharedLocalChanges: (summary?.untracked ?? 0) > 0,
+				commit,
+				untrackedChanges: (summary?.untracked ?? 0) > 0,
 			};
 		} catch (error) {
-			logger.warn("Workflow Git checkpoint could not be shared", {
+			logger.warn("Local ZZWorkflow Git checkpoint could not be captured", {
 				error: String(error),
 				taskId: state.taskId,
-				remote,
 			});
 			return undefined;
 		}
 	}
 
-	async syncState(state: TaskLifecycleState, reason: WorkflowSyncReason): Promise<void> {
+	async syncState(state: TaskLifecycleState, reason: ZZWorkflowSyncReason): Promise<void> {
 		this.#state = state;
-		const services = await this.#services;
-		if (!services || this.#closed) return;
-		if (services.coordinator) {
-			const sharedCheckpoint = await this.#shareCheckpoint(services, state, reason);
-			const request = {
-				taskId: state.taskId,
-				repoId: state.workspace.repoId,
-				machineId: services.machineId,
-				sessionKey: `${services.machineId}:${state.sessionId}`,
-				reason,
-				state,
-				sharedCheckpoint,
-			};
-			services.store.enqueueCoordinator({
-				id: eventId(request),
-				path: "/v1/tasks",
-				request,
-			});
-			const additionalPath = additionalCoordinatorPath(state, reason);
-			if (additionalPath) {
-				const additionalRequest = { ...request, event: reason };
-				services.store.enqueueCoordinator({
-					id: eventId({ path: additionalPath, ...additionalRequest }),
-					path: additionalPath,
-					request: additionalRequest,
-				});
-			}
-			try {
-				await services.coordinator.flush(services.store);
-			} catch (error) {
-				logger.warn("Workflow coordinator unavailable; task event remains queued locally", {
-					error: String(error),
-					taskId: state.taskId,
-					reason,
-				});
-			}
-			if (isTerminalOrSuspended(state)) {
-				try {
-					await services.coordinator.releaseWorkspace(this.#leaseInput(services, state));
-				} catch (error) {
-					logger.debug("Workflow workspace release unavailable", { error: String(error), taskId: state.taskId });
-				}
-				this.#leaseExpiresAt = 0;
-			} else {
-				this.#startHeartbeat(services);
-			}
+		const services = await this.#servicesFor(state);
+		if (this.#closed) return;
+		const checkpoint = await this.#captureCheckpoint(state, reason);
+		const payload = { reason, state, checkpoint };
+		services.store.recordEvent({
+			id: eventId(payload),
+			taskId: state.taskId,
+			repoId: state.workspace.repoId || services.repoId,
+			kind: checkpointReason(reason) ? "checkpoint" : reason,
+			payload,
+		});
+		if (isTerminalOrSuspended(state)) {
+			this.#stopHeartbeat();
+			services.store.releaseLease(this.#leaseInput(services, state));
+			this.#leaseExpiresAt = 0;
 		}
 	}
 
-	async syncOperation(state: TaskLifecycleState, operation: TaskOperation, reason: WorkflowSyncReason): Promise<void> {
+	async syncOperation(
+		state: TaskLifecycleState,
+		operation: TaskOperation,
+		reason: ZZWorkflowSyncReason,
+	): Promise<void> {
 		this.#state = state;
-		const services = await this.#services;
-		if (!services?.coordinator || this.#closed) return;
-		const request = {
+		const services = await this.#servicesFor(state);
+		if (this.#closed) return;
+		const payload = { reason, state, operation };
+		services.store.recordEvent({
+			id: eventId(payload),
 			taskId: state.taskId,
-			machineId: services.machineId,
-			reason,
-			operation,
-		};
-		services.store.enqueueCoordinator({
-			id: eventId(request),
-			path: "/v1/events",
-			request,
+			repoId: state.workspace.repoId || services.repoId,
+			kind: reason,
+			payload,
 		});
-		try {
-			await services.coordinator.flush(services.store);
-		} catch (error) {
-			logger.warn("Workflow operation event remains queued locally", {
-				error: String(error),
-				operationId: operation.id,
-			});
-		}
 	}
 
 	async assertMutationLease(state: TaskLifecycleState): Promise<void> {
 		this.#state = state;
-		const services = await this.#services;
-		if (!services?.coordinator || this.#closed) return;
+		const services = await this.#servicesFor(state);
+		if (this.#closed) return;
 		if (Date.now() < this.#leaseExpiresAt) return;
-		try {
-			await services.coordinator.acquireWorkspace(this.#leaseInput(services, state));
-			this.#leaseExpiresAt = Date.now() + services.config.workspaceLeaseMs;
-			this.#startHeartbeat(services);
-		} catch (error) {
-			if (error instanceof WorkspaceLeaseConflictError || !services.config.degradedAllowExecution) throw error;
-			logger.warn("Workflow coordinator unreachable; executing in degraded local mode", {
-				error: String(error),
-				taskId: state.taskId,
-			});
+		if (!services.store.acquireLease(this.#leaseInput(services, state))) {
+			throw new WorkspaceLeaseConflictError(state.workspaceId);
 		}
+		this.#leaseExpiresAt = Date.now() + services.config.workspaceLeaseMs;
+		this.#startHeartbeat(services);
 	}
 
-	async recall(state: TaskLifecycleState, stage: WorkflowRecallStage): Promise<string | undefined> {
+	async recall(state: TaskLifecycleState, stage: ZZWorkflowRecallStage): Promise<string | undefined> {
 		this.#state = state;
-		const services = await this.#services;
-		if (!services?.memory || this.#closed) return undefined;
-		const result =
-			stage === "intake"
-				? await services.memory.recallForIntake({
-						userId: loadHindsightConfig(this.#options.settings).userId ?? "default",
-						repoId: state.workspace.repoId,
-						taskDraft: state.specification.goal,
-					})
-				: stage === "planning"
-					? await services.memory.recallForPlanning({
-							repoId: state.workspace.repoId,
-							taskId: state.taskId,
-							goal: state.specification.goal,
-							changedFiles: state.specification.scope,
-						})
-					: await services.memory.recallForRecovery({
-							repoId: state.workspace.repoId,
-							taskId: state.taskId,
-							attemptId: state.attemptId,
-							failure: state.pendingOperationIds.join(", ") || state.specification.goal,
-						});
+		const services = await this.#servicesFor(state);
+		if (this.#closed) return undefined;
+		const planning = stage !== "recovery";
+		const result = await services.knowledge.recall({
+			purpose: stage === "recovery" ? "task-resume" : "task-planning",
+			query: [
+				state.specification.goal,
+				...state.specification.scope,
+				...(stage === "recovery" ? state.pendingOperationIds : []),
+			].join("\n"),
+			scope: {
+				global: stage === "intake",
+				repo: true,
+				task: stage !== "intake",
+			},
+			depth: planning ? "deep" : "forensic",
+			includeSourceFacts: stage === "recovery",
+			identity: this.#knowledgeIdentity(state),
+		});
 		return result.content;
 	}
 
-	async retainTaskMemory(memory: TaskLifecycleMemory, state: TaskLifecycleState): Promise<void> {
+	async requestTaskKnowledgeReview(state: TaskLifecycleState): Promise<void> {
 		this.#state = state;
-		const services = await this.#services;
-		if (!services?.memory || this.#closed) return;
-		await services.memory.retain({
-			kind: "successful-recipe",
-			statement: memory.content,
-			rationale: memory.context,
-			applicability: {
-				repoId: state.workspace.repoId,
-				taskId: state.taskId,
-				commitRange: state.workspace.headCommit ?? undefined,
-				conditions: state.specification.constraints,
-			},
-			evidence: state.evidence
-				.filter(item => !item.stale)
-				.map(item => ({
-					evidenceId: item.id,
-					type:
-						item.type === "acceptance"
-							? ("user-confirmation" as const)
-							: item.type === "verification"
-								? ("test" as const)
-								: item.type === "workspace"
-									? ("diff" as const)
-									: ("log" as const),
-				})),
-			confidence: "confirmed",
-			documentId: `task/${state.taskId}/current-summary`,
-			mutable: true,
-			attemptId: state.attemptId,
-			specVersion: state.specVersion,
-			planVersion: state.planVersion,
-			commit: state.workspace.headCommit ?? undefined,
+		const services = await this.#servicesFor(state);
+		if (this.#closed) return;
+		const evidenceRefs = state.evidence
+			.filter(item => !item.stale)
+			.map(item => ({
+				id: item.id,
+				type:
+					item.type === "acceptance"
+						? ("user-confirmation" as const)
+						: item.type === "verification"
+							? ("test" as const)
+							: item.type === "workspace"
+								? ("diff" as const)
+								: ("log" as const),
+			}));
+		const candidates: KnowledgeReviewRequest["candidates"] = state.specification.statements
+			.filter(
+				statement =>
+					statement.type === "confirmed_requirement" ||
+					statement.type === "user_preference" ||
+					statement.type === "rejected_option",
+			)
+			.map(statement => ({
+				knowledgeKey: `task/${state.taskId}/specification/${statement.id}`,
+				statement: statement.statement,
+				form:
+					statement.type === "user_preference"
+						? ("preference" as const)
+						: statement.type === "rejected_option"
+							? ("decision" as const)
+							: ("constraint" as const),
+				domain: statement.type === "user_preference" ? ("user" as const) : ("product" as const),
+				source: "user" as const,
+				confidence: "confirmed" as const,
+				evidenceRefs,
+			}));
+		if (candidates.length === 0) return;
+		await services.knowledge.requestReview({
+			id: `review-${state.taskId}-${state.specVersion}-${state.planVersion}`,
+			taskId: state.taskId,
+			repoId: state.workspace.repoId,
+			goal: state.specification.goal,
+			candidates,
+			createdAt: new Date().toISOString(),
 		});
 	}
 
 	async close(): Promise<void> {
 		this.#closed = true;
-		if (this.#heartbeatTimer) clearInterval(this.#heartbeatTimer);
-		this.#heartbeatTimer = undefined;
+		this.#stopHeartbeat();
 		const services = await this.#services;
-		if (!services) return;
-		if (services.memory) await services.memory.flushOutbox();
-		if (services.coordinator) {
-			try {
-				await services.coordinator.flush(services.store);
-				if (this.#state) {
-					await services.coordinator.releaseWorkspace(this.#leaseInput(services, this.#state));
-				}
-			} catch (error) {
-				logger.debug("Workflow integration closed with queued events", { error: String(error) });
-			}
-		}
+		await services.knowledge.close();
+		if (this.#state) services.store.releaseLease(this.#leaseInput(services, this.#state));
 		services.store.close();
 	}
 }

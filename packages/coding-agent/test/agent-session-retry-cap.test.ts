@@ -1360,7 +1360,7 @@ describe("AgentSession retry delay cap", () => {
 		expect(last.content).toContainEqual({ type: "text", text: "partial" });
 	});
 
-	it("does not auto-retry empty reasonless aborts once the session is disposing", async () => {
+	it("does not start or auto-retry a prompt once the session is disposing", async () => {
 		const model = getBundledModel("anthropic", "claude-sonnet-4-5");
 		if (!model) {
 			throw new Error("Expected bundled Anthropic test model to exist");
@@ -1408,17 +1408,14 @@ describe("AgentSession retry delay cap", () => {
 			if (event.type === "auto_retry_start") retryStartEvents.push(event);
 		});
 
-		// Enter the disposing window before the empty abort lands. Without the
-		// #isDisposed guard this prompt would hang on an orphaned retry promise.
+		// Enter the disposing window before prompting. The disposed guard must
+		// reject the turn before provider execution and must not schedule retry.
 		session.beginDispose();
 		await session.prompt("Trigger empty aborted turn while disposing");
 		await session.waitForIdle();
 
 		expect(retryStartEvents).toHaveLength(0);
-		// No retry continuation fired, so the second scripted response is untouched.
-		expect(mock.calls).toHaveLength(1);
-		const last = lastAssistant(session);
-		expect(last.stopReason).toBe("aborted");
+		expect(mock.calls).toHaveLength(0);
 	});
 
 	it("caps repeated OpenRouter stream closes after streamed thinking at one retry", async () => {

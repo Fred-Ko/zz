@@ -180,7 +180,8 @@ function formatGoalBudget(current: number, budget?: number): string {
 }
 
 function renderGoalMode(ctx: SegmentContext, mode: { enabled: boolean; paused: boolean }): RenderedSegment {
-	const goal = ctx.session.getGoalModeState()?.goal;
+	const goalState = ctx.session.getGoalModeState();
+	const goal = goalState?.goal;
 	const status = goal?.status ?? (mode.paused ? "paused" : "active");
 
 	let icon: string = theme.icon.goal;
@@ -206,7 +207,39 @@ function renderGoalMode(ctx: SegmentContext, mode: { enabled: boolean; paused: b
 			break;
 	}
 
-	const parts: string[] = [withIcon(icon, "Goal")];
+	const zzWorkflowActive = goalState?.controller === "zzworkflow";
+	const parts: string[] = [withIcon(icon, zzWorkflowActive ? "ZZW" : "Goal")];
+	const zzWorkflow = zzWorkflowActive ? ctx.session.taskLifecycle?.state : undefined;
+	if (zzWorkflow) {
+		parts.push(zzWorkflow.phase);
+		parts.push(`P${zzWorkflow.planVersion}:${zzWorkflow.plan.approval ?? "draft"}`);
+		if (zzWorkflow.reconciliation) {
+			parts.push(`R:${zzWorkflow.reconciliation.classification ?? "분류"}`);
+		} else {
+			const activeStep =
+				zzWorkflow.plan.steps.find(step => step.status === "in_progress") ??
+				zzWorkflow.plan.steps.find(
+					step =>
+						step.kind !== "milestone" &&
+						step.status === "pending" &&
+						step.dependsOn.every(
+							dependencyId =>
+								zzWorkflow.plan.steps.find(candidate => candidate.id === dependencyId)?.status === "completed",
+						),
+				);
+			const milestone = zzWorkflow.plan.steps.find(
+				step =>
+					step.kind === "milestone" &&
+					step.status === "pending" &&
+					step.dependsOn.every(
+						dependencyId =>
+							zzWorkflow.plan.steps.find(candidate => candidate.id === dependencyId)?.status === "completed",
+					),
+			);
+			if (activeStep) parts.push(`S:${activeStep.id}`);
+			else if (milestone) parts.push(`M:${milestone.id}`);
+		}
+	}
 	const showBudget = ctx.session.settings.get("goal.statusInFooter") === true;
 	if (showBudget && goal) {
 		parts.push(formatGoalBudget(goal.tokensUsed, goal.tokenBudget));
@@ -281,7 +314,7 @@ const pathSegment: StatusLineSegment = {
 		// project, and a worktree dir that usually duplicates the branch (already
 		// shown by the git segment). Collapse to the project name, appending the
 		// worktree dir only when it diverges from the branch.
-		if (stripPrefix && ctx.worktree) {
+		if (stripPrefix && ctx.worktree?.kind === "linked" && !ctx.activeRepo) {
 			const { projectName, worktreeName } = ctx.worktree;
 			const label = ctx.git.branch === worktreeName ? projectName : `${projectName}/${worktreeName}`;
 			const content = withIcon(theme.icon.worktree, clampPathLength(label, opts.maxLength ?? 40));
@@ -312,6 +345,17 @@ const pathSegment: StatusLineSegment = {
 		const showScratchIcon = scratch && stripPrefix;
 		const icon = showScratchIcon ? theme.icon.scratchFolder : theme.icon.folder;
 		const content = withIcon(icon, pwd);
+		return { content: theme.fg("statusLinePath", content), visible: true };
+	},
+};
+
+const worktreeSegment: StatusLineSegment = {
+	id: "worktree",
+	render(ctx) {
+		if (!ctx.worktree) return { content: "", visible: false };
+
+		const label = ctx.worktree.kind === "primary" ? "primary" : sanitizeStatusText(ctx.worktree.worktreeName);
+		const content = withIcon(theme.icon.worktree, truncateToWidth(label, TRUNCATE_LENGTHS.SHORT));
 		return { content: theme.fg("statusLinePath", content), visible: true };
 	},
 };
@@ -679,6 +723,7 @@ export const SEGMENTS: Record<StatusLineSegmentId, StatusLineSegment> = {
 	model: modelSegment,
 	mode: modeSegment,
 	path: pathSegment,
+	worktree: worktreeSegment,
 	git: gitSegment,
 	pr: prSegment,
 	subagents: subagentsSegment,

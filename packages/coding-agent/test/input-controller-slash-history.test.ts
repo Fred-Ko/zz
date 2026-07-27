@@ -16,6 +16,7 @@ function makeCtx(isStreaming = false) {
 	const followUp = vi.fn(async (_text: string, _images?: ImageContent[]) => {});
 	const steer = vi.fn(async (_text: string, _images?: ImageContent[]) => {});
 	const onInputCallback = vi.fn();
+	const present = vi.fn();
 	let text = "";
 	const editor = {
 		onSubmit: undefined as undefined | ((t: string) => Promise<void>),
@@ -50,6 +51,9 @@ function makeCtx(isStreaming = false) {
 		handleHotkeysCommand: vi.fn(),
 		handleMCPCommand,
 		showStatus: vi.fn(),
+		present,
+		lastStatusSpacer: undefined,
+		lastStatusText: undefined,
 		onInputCallback,
 		startPendingSubmission: (input: {
 			text: string;
@@ -75,7 +79,25 @@ function makeCtx(isStreaming = false) {
 		onInputCallback,
 		handleMCPCommand,
 		showStatus: ctx.showStatus,
+		present,
 	};
+}
+
+function renderedPresentation(present: { mock: { calls: readonly (readonly unknown[])[] } }, callIndex = 0): string {
+	const content = present.mock.calls[callIndex]?.[0];
+	const components = Array.isArray(content) ? content : [content];
+	return Bun.stripANSI(
+		components
+			.filter(
+				(component): component is { render(width: number): string[] } =>
+					typeof component === "object" &&
+					component !== null &&
+					"render" in component &&
+					typeof component.render === "function",
+			)
+			.flatMap(component => component.render(200))
+			.join("\n"),
+	);
 }
 
 function controllerFor(ctx: InteractiveModeContext) {
@@ -87,12 +109,13 @@ function controllerFor(ctx: InteractiveModeContext) {
 
 describe("input controller — slash command history (#3148)", () => {
 	it("records a plain handled command (/hotkeys) that has no per-handler history call", async () => {
-		const { ctx, editor, addToHistory } = makeCtx();
+		const { ctx, editor, addToHistory, present } = makeCtx();
 		controllerFor(ctx);
 
 		await editor.onSubmit?.("/hotkeys");
 
 		expect(addToHistory).toHaveBeenCalledWith("/hotkeys");
+		expect(renderedPresentation(present)).toContain("> /hotkeys");
 	});
 
 	it("records a non-secret /mcp subcommand", async () => {
@@ -106,7 +129,7 @@ describe("input controller — slash command history (#3148)", () => {
 	});
 
 	it("does NOT record /mcp add with a --token (would leak the bearer token)", async () => {
-		const { ctx, editor, addToHistory, handleMCPCommand } = makeCtx();
+		const { ctx, editor, addToHistory, handleMCPCommand, present } = makeCtx();
 		controllerFor(ctx);
 
 		await editor.onSubmit?.("/mcp add srv --url http://x --token sk-secret123");
@@ -115,6 +138,9 @@ describe("input controller — slash command history (#3148)", () => {
 		expect(handleMCPCommand).toHaveBeenCalledWith("/mcp add srv --url http://x --token sk-secret123");
 		// ...but the secret-bearing text is kept out of recallable history.
 		expect(addToHistory).not.toHaveBeenCalled();
+		const rendered = renderedPresentation(present);
+		expect(rendered).toContain("> /mcp [민감한 인수 숨김]");
+		expect(rendered).not.toContain("sk-secret123");
 	});
 
 	it("routes /queue through the yield-only follow-up queue while streaming", async () => {

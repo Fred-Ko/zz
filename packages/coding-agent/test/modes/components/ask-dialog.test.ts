@@ -336,7 +336,7 @@ describe("AskDialogComponent", () => {
 		component.handleInput(TAB);
 
 		const output = render(component);
-		expect(output.toLowerCase()).toContain("unanswered");
+		expect(output).toContain("미응답");
 
 		// Enter on Submit
 		component.handleInput(ENTER);
@@ -391,7 +391,7 @@ describe("AskDialogComponent", () => {
 		await Promise.resolve();
 
 		expect(onPrompt).toHaveBeenCalledTimes(1);
-		expect(onPrompt.mock.calls[0][0]).toBe("Note for Option A: Choose one?");
+		expect(onPrompt.mock.calls[0][0]).toBe("Option A 메모: Choose one?");
 
 		// Verify note is saved by submitting
 		component.handleInput(ENTER);
@@ -424,7 +424,7 @@ describe("AskDialogComponent", () => {
 		await Promise.resolve();
 
 		expect(onPrompt).toHaveBeenCalledTimes(1);
-		expect(onPrompt.mock.calls[0][0]).toBe("Note for Option A: Choose one?");
+		expect(onPrompt.mock.calls[0][0]).toBe("Option A 메모: Choose one?");
 		// No prior note → prefill is undefined.
 		expect(onPrompt.mock.calls[0][1]).toBeUndefined();
 
@@ -869,7 +869,7 @@ describe("AskDialogComponent", () => {
 			expect(stripVTControlCharacters(line).length).toBeLessThanOrEqual((process.stdout.columns ?? 80) - 4);
 		}
 		// Must contain the prefix and a truncation indicator on the last line.
-		expect(stripVTControlCharacters(title)).toContain("Custom answer:");
+		expect(stripVTControlCharacters(title)).toContain("직접 답변:");
 	});
 
 	it("bounds note prompt title for long multi-line questions", async () => {
@@ -900,7 +900,7 @@ describe("AskDialogComponent", () => {
 		// Title must be bounded to at most MAX_PROMPT_TITLE_ROWS lines.
 		expect(lines.length).toBeLessThanOrEqual(3);
 		// The multi-line question must be flattened (no raw newlines expanding rows).
-		expect(stripVTControlCharacters(title)).toContain("Note for Option A:");
+		expect(stripVTControlCharacters(title)).toContain("Option A 메모:");
 	});
 
 	it("scrolls question rows when cursor moves below the viewport", () => {
@@ -921,7 +921,7 @@ describe("AskDialogComponent", () => {
 			const initial = renderAt(60);
 			expect(initial).toContain("Option 01");
 			expect(initial).not.toContain("Option 30");
-			expect(initial).toContain("↓ scroll");
+			expect(initial).toContain("↓ 스크롤");
 
 			for (let i = 0; i < 28; i++) component.handleInput(DOWN);
 			const scrolled = renderAt(60);
@@ -985,7 +985,7 @@ describe("AskDialogComponent", () => {
 
 		// Submit tab warns about the unanswered question but still submits.
 		component.handleInput(TAB);
-		expect(render(component).toLowerCase()).toContain("unanswered");
+		expect(render(component)).toContain("미응답");
 		component.handleInput(ENTER);
 
 		expect(onSubmit).toHaveBeenCalledTimes(1);
@@ -1089,7 +1089,7 @@ describe("AskDialogComponent", () => {
 			expect(out).toContain("PgUp/PgDn");
 			expect(out).toContain("Tab/←/→");
 			expect(out).not.toContain(" tabs");
-			expect(out).toContain("ctrl+g cancel");
+			expect(out).toContain("ctrl+g 취소");
 			setKeybindings(
 				KeybindingsManager.inMemory({
 					"tui.select.cancel": "ctrl+g",
@@ -1099,7 +1099,7 @@ describe("AskDialogComponent", () => {
 			);
 			const remapped = render(component);
 			expect(remapped).toContain("ctrl+u/ctrl+d");
-			expect(remapped).toContain("ctrl+g cancel");
+			expect(remapped).toContain("ctrl+g 취소");
 		} finally {
 			if (originalRows) Object.defineProperty(process.stdout, "rows", originalRows);
 			else Reflect.deleteProperty(process.stdout, "rows");
@@ -1134,7 +1134,7 @@ describe("AskDialogComponent", () => {
 			expect(out).not.toContain("PREVIEW-MIDDLE");
 			expect(out).not.toContain("PREVIEW-LAST");
 			expect(out).not.toContain("PgUp/PgDn");
-			expect(out).toContain("↓ scroll");
+			expect(out).toContain("↓ 스크롤");
 			component.handleInput(DOWN);
 			for (let page = 0; page < 4; page++) component.handleInput(PAGE_DOWN);
 			out = render(component);
@@ -1142,7 +1142,7 @@ describe("AskDialogComponent", () => {
 			expect(out).toContain("PREVIEW-MIDDLE");
 			component.handleInput(DOWN);
 			out = render(component);
-			expect(out).toContain("Other (type your own)");
+			expect(out).toContain("직접 입력");
 			expect(out).not.toContain("PREVIEW-MIDDLE");
 			expect(out).not.toContain("PgUp/PgDn");
 			component.handleInput(UP);
@@ -1154,10 +1154,10 @@ describe("AskDialogComponent", () => {
 				out = render(component);
 			}
 			expect(out).toContain("PREVIEW-LAST");
-			expect(out).not.toContain("Other (type your own)");
+			expect(out).not.toContain("직접 입력");
 			component.handleInput(DOWN);
 			out = render(component);
-			expect(out).toContain("Other (type your own)");
+			expect(out).toContain("직접 입력");
 			component.handleInput(UP);
 			out = render(component);
 			for (let page = 0; page < 10; page++) {
@@ -1191,13 +1191,13 @@ describe("AskDialogComponent", () => {
 			expect(out).toContain("PREVIEW-SHORT-FIRST");
 			expect(out).toContain("PREVIEW-SHORT-LAST");
 			expect(out).not.toContain("PgUp/PgDn");
-			expect(out).toMatch(/[↓↑↕] scroll/);
+			expect(out).toMatch(/[↓↑↕] 스크롤/);
 			component.handleInput(PAGE_DOWN);
 			out = render(component);
 			expect(out).toContain("PREVIEW-SHORT-FIRST");
 			expect(out).toContain("PREVIEW-SHORT-LAST");
 			expect(out).not.toContain("PgUp/PgDn");
-			expect(out).toMatch(/[↓↑↕] scroll/);
+			expect(out).toMatch(/[↓↑↕] 스크롤/);
 		} finally {
 			if (originalRows) Object.defineProperty(process.stdout, "rows", originalRows);
 			else Reflect.deleteProperty(process.stdout, "rows");

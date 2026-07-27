@@ -1,6 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "bun:test";
 import { type SettingPath, Settings } from "@oh-my-pi/pi-coding-agent/config/settings";
-import { createTools, HIDDEN_TOOLS, type ToolSession } from "@oh-my-pi/pi-coding-agent/tools";
+import type { Goal } from "@oh-my-pi/pi-coding-agent/goals/state";
+import { type TaskLifecycleJournalEntry, TaskLifecycleRuntime } from "@oh-my-pi/pi-coding-agent/goals/task-lifecycle";
+import {
+	createTools,
+	HIDDEN_TOOLS,
+	type ToolSession,
+	ZZWorkflowProposePlanTool,
+} from "@oh-my-pi/pi-coding-agent/tools";
 
 Bun.env.PI_PYTHON_SKIP_CHECK = "1";
 
@@ -23,10 +30,11 @@ function createSettingsWithOverrides(overrides: Partial<Record<SettingPath, unkn
 	});
 }
 
-function createActiveGoalState() {
+function createActiveGoalState(controller: "goal" | "zzworkflow" = "goal") {
 	return {
 		enabled: true,
 		mode: "active" as const,
+		controller,
 		goal: {
 			id: "goal-1",
 			objective: "Ship the release",
@@ -276,6 +284,121 @@ describe("createTools", () => {
 		const names = tools.map(t => t.name);
 
 		expect(names).toEqual(["read", "goal"]);
+	});
+
+	it("exposes ZZW tools only when ZZWorkflow owns the active goal", async () => {
+		const session = createTestSession({
+			settings: createSettingsWithOverrides({ "goal.enabled": true }),
+			getGoalModeState: () => createActiveGoalState("zzworkflow"),
+		});
+
+		const names = (await createTools(session, ["read"])).map(tool => tool.name);
+
+		expect(names).toEqual(
+			expect.arrayContaining([
+				"goal",
+				"zzw_get_state",
+				"zzw_propose_plan",
+				"zzw_patch_plan",
+				"zzw_report_observation",
+				"zzw_report_step_result",
+				"zzw_submit_verification",
+			]),
+		);
+	});
+
+	it("returns all ZZW Plan mapping failures as one structured tool result", async () => {
+		const entries: TaskLifecycleJournalEntry[] = [];
+		const runtime = new TaskLifecycleRuntime({
+			getSessionId: () => "session-1",
+			getCwd: () => "/repo",
+			getEntries: () => entries,
+			appendCustomEntry: (customType, data) => {
+				entries.push({ type: "custom", customType, data });
+				return `entry-${entries.length}`;
+			},
+			ensureOnDisk: async () => {},
+			flush: async () => {},
+			captureWorkspace: async () => ({
+				workspaceId: "workspace-1",
+				repoId: "repo-1",
+				cwd: "/repo",
+				repoRoot: "/repo",
+				branch: "main",
+				headCommit: "abc",
+				dirtyTreeHash: "clean",
+				dependencyLockHash: "lock",
+				environmentHash: "env",
+				capturedAt: 1,
+			}),
+		});
+		const goal: Goal = {
+			id: "goal-1",
+			objective: [
+				"## Objective",
+				"Ship the release.",
+				"## Success criteria",
+				"- Release succeeds.",
+				"## Verification",
+				"- 저장소 루트에서 yarn verify를 실행하고 종료 코드 0을 확인한다.",
+			].join("\n"),
+			status: "active",
+			tokensUsed: 0,
+			timeUsedSeconds: 0,
+			createdAt: 1,
+			updatedAt: 1,
+		};
+		await runtime.handleGoalEvent({ type: "created", goal });
+		const tool = new ZZWorkflowProposePlanTool(createTestSession({ getTaskLifecycleRuntime: () => runtime }));
+
+		const result = await tool.execute("proposal-1", {
+			based_on_spec_version: 1,
+			steps: [
+				{
+					id: "work",
+					phase: "Implementation",
+					content: "Implement",
+					kind: "work",
+					depends_on: [],
+					expected_effects: [],
+					allowed_tools: ["write"],
+					allowed_targets: [],
+					postconditions: [],
+					success_condition_ids: [],
+					verification_ids: [],
+					validators: [],
+					rerun_policy: "safe",
+					risk_class: "low",
+				},
+				{
+					id: "verify",
+					phase: "Validation",
+					content: "Verify",
+					kind: "validation",
+					depends_on: ["work"],
+					expected_effects: [],
+					allowed_tools: ["bash"],
+					allowed_targets: [],
+					postconditions: [],
+					success_condition_ids: [],
+					verification_ids: [],
+					validators: ["yarn verify"],
+					rerun_policy: "safe",
+					risk_class: "low",
+				},
+			],
+		});
+
+		expect(result.isError).toBe(true);
+		expect(result.details).toMatchObject({
+			accepted: false,
+			code: "INVALID_PLAN_MAPPING",
+			issues: [
+				{ code: "UNMAPPED_SUCCESS_CONDITION", referenceId: "SC-1" },
+				{ code: "UNMAPPED_VERIFICATION", referenceId: "V-1" },
+			],
+		});
+		expect(runtime.state?.planVersion).toBe(1);
 	});
 
 	it("does not widen a restricted explicit tool list for an active goal", async () => {

@@ -155,9 +155,9 @@ Perfect edits, fewer tokens. The model points at anchors instead of retyping the
 
 Other harnesses bolt on gh_issue_view, gh_pr_view, gh_search — each with its own parameters the agent has to learn and you have to debug. We skipped that. read already handles paths; PRs are paths. One interface to teach the model, one surface to keep correct.
 
-### 13 · Hindsight: memory the agent curates
+### 13 · ZZ Knowledge: deliberate long-term context
 
-The agent remembers your codebase between sessions. It writes facts mid-run with retain, pulls them back with recall, and compresses each session into a mental model that loads on the first turn of the next one. Project-scoped by default, so what it learns about this repo stays with this repo.
+ZZ loads a small, scoped working set when prior knowledge can change a decision. Durable facts require evidence and a future use; current progress stays in ZZWorkflow and Git. Hindsight sits behind a ZZ-owned policy wrapper, and bounded mental models never refresh automatically.
 
 ### 14 · ACP: editor-drivable agent
 
@@ -244,15 +244,16 @@ Stealth's on by default, so pages see a normal user instead of a headless bot. T
 
 - `checkpoint` — mark conversation state for a later collapse-and-report.
 - `rewind` — prune exploratory context, keep a concise report.
-- `retain` — queue durable facts into the active Hindsight bank.
-- `recall` — search the Hindsight bank for raw memories.
-- `reflect` — ask Hindsight to synthesize an answer over the bank.
+- `knowledge_recall` — retrieve a purpose- and scope-bound working set.
+- `knowledge_retain` — propose an evidenced durable record through the local outbox.
+- `knowledge_reflect` — synthesize only when targeted recall is insufficient.
+- `knowledge_curate` — correct, invalidate, or restore a known record without deleting history.
 
 **Misc**
 
 - `resolve` — apply or discard a queued preview action.
 
-Setting-gated, off by default: `github`, `inspect_image`, `tts`, `checkpoint`, `rewind`, `retain`, `recall`, `reflect`. Flip them on once, scoped per project.
+Setting-gated, off by default: `github`, `inspect_image`, `tts`, `checkpoint`, `rewind`, and the `knowledge_*` tools. Enable Knowledge with an explicit security boundary.
 
 [Full reference →](https://omp.sh/docs/tools)
 
@@ -564,7 +565,6 @@ For architecture and contribution guidelines, see [packages/coding-agent/DEVELOP
 | **[@oh-my-pi/pi-utils](packages/utils)**                  | Shared utilities (logging, streams, dirs/env/process helpers)              |
 | **[@oh-my-pi/pi-wire](packages/wire)**                    | Shared collab live-session protocol types and relay constants              |
 | **[@oh-my-pi/hashline](packages/hashline)**               | Line-anchored patch language and applier behind the `edit` tool            |
-| **[@oh-my-pi/pi-mnemopi](packages/mnemopi)**              | Local SQLite memory engine for ZZ agents                             |
 | **[@oh-my-pi/snapcompact](packages/snapcompact)**         | Bitmap-frame context compression package and SQuAD eval suite              |
 | **[@oh-my-pi/swarm-extension](packages/swarm-extension)** | Swarm orchestration extension package                                      |
 

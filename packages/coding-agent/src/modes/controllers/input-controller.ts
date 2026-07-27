@@ -2,7 +2,7 @@ import * as fs from "node:fs/promises";
 import * as path from "node:path";
 import { ThinkingLevel } from "@oh-my-pi/pi-agent-core";
 import type { ImageContent } from "@oh-my-pi/pi-ai";
-import { type AutocompleteProvider, matchesKey, type SlashCommand } from "@oh-my-pi/pi-tui";
+import { type AutocompleteProvider, matchesKey, type SlashCommand, Spacer, Text } from "@oh-my-pi/pi-tui";
 import { $env, isEnoent, logger, sanitizeText } from "@oh-my-pi/pi-utils";
 import { isSettingsInitialized, settings } from "../../config/settings";
 import { resolveLocalRoot } from "../../internal-urls";
@@ -23,7 +23,7 @@ import { isTinyTitleLocalModelKey } from "../../tiny/models";
 import { isLowSignalTitleInput } from "../../tiny/text";
 import { tinyTitleClient } from "../../tiny/title-client";
 import type { TinyTitleProgressEvent } from "../../tiny/title-protocol";
-import { shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
+import { replaceTabs, shortenPath, TRUNCATE_LENGTHS, truncateToWidth } from "../../tools/render-utils";
 import { vocalizer } from "../../tts/vocalizer";
 import {
 	copyToClipboard,
@@ -183,6 +183,36 @@ export class InputController {
 	// flow. Seeded from 0 and bumped past existing paste files.
 	#pasteCounter = 0;
 
+	async #executeBuiltinCommand(text: string): Promise<string | boolean> {
+		let accepted = false;
+		try {
+			return await executeBuiltinSlashCommand(text, {
+				ctx: this.ctx,
+				onCommandAccepted: command => {
+					accepted = true;
+					// Full InteractiveMode hosts expose the transcript presentation sink.
+					// Minimal SDK/embedder contexts may deliberately omit it; the command
+					// must still execute even when there is no visible transcript owner.
+					if (typeof this.ctx.present === "function") {
+						const display = shouldSkipHistory(command.text)
+							? `/${command.name} [민감한 인수 숨김]`
+							: replaceTabs(sanitizeText(command.text));
+						const invocation = new Text(`> ${display}`, 1, 0);
+						this.ctx.present([new Spacer(1), invocation]);
+					}
+				},
+			});
+		} finally {
+			if (accepted) {
+				// A command result emitted through showStatus is now transcript output,
+				// not a replaceable progress notification. Keep later statuses from
+				// overwriting it while leaving it out of the persisted/model history.
+				this.ctx.lastStatusSpacer = undefined;
+				this.ctx.lastStatusText = undefined;
+			}
+		}
+	}
+
 	#showTinyTitleDownloadProgress(modelKey: string): void {
 		if (!isTinyTitleLocalModelKey(modelKey)) return;
 		const component = new TinyTitleDownloadProgressComponent(modelKey);
@@ -298,6 +328,9 @@ export class InputController {
 				return;
 			}
 			if (this.ctx.hasActiveOmfg() && this.ctx.handleOmfgEscape()) {
+				return;
+			}
+			if (this.ctx.cancelGuidedGoalInput?.()) {
 				return;
 			}
 
@@ -629,6 +662,10 @@ export class InputController {
 
 			if (!text && !hasPendingImages) return;
 
+			if (text && this.ctx.submitGuidedGoalInput?.(text)) {
+				return;
+			}
+
 			// Continue shortcuts: "." or "c" resume the agent with a hidden agent-authored
 			// developer directive (no visible user message) instead of an empty turn, so the
 			// model continues the prior intent rather than second-guessing the interrupt.
@@ -685,9 +722,7 @@ export class InputController {
 
 			// Handle built-in slash commands
 			if (text) {
-				const slashResult = await executeBuiltinSlashCommand(text, {
-					ctx: this.ctx,
-				});
+				const slashResult = await this.#executeBuiltinCommand(text);
 				if (slashResult === true) {
 					if (!shouldSkipHistory(text)) this.ctx.editor.addToHistory(text);
 					return;
@@ -1309,9 +1344,7 @@ export class InputController {
 		}
 
 		if (text) {
-			const slashResult = await executeBuiltinSlashCommand(text, {
-				ctx: this.ctx,
-			});
+			const slashResult = await this.#executeBuiltinCommand(text);
 			if (slashResult === true) {
 				if (!shouldSkipHistory(text)) this.ctx.editor.addToHistory(text);
 				return;

@@ -1,0 +1,4 @@
+interface:
+  display_name: "ZZW Plan Evolution"
+  short_description: "Expand and repair an evolving Plan DAG safely"
+  default_prompt: "Use $zzw-plan-evolution to evolve the active ZZWorkflow Plan DAG."

@@ -115,13 +115,13 @@ export interface SegmentContext {
 		status: { staged: number; unstaged: number; untracked: number } | null;
 		pr: { number: number; url: string } | null;
 	};
-	/**
-	 * Set when the path cwd is a *linked* git worktree, naming the shared
-	 * primary checkout (the project). Lets the path segment collapse the
-	 * base-prefixed `<base>/<project>/<worktree>` path to the project name —
-	 * the worktree/branch is already shown by the git segment.
-	 */
-	worktree: { projectName: string; worktreeName: string } | null;
+	/** Active Git checkout identity. Linked worktrees also name their shared
+	 * primary checkout so path rendering can collapse generated worktree roots. */
+	worktree: {
+		kind: "primary" | "linked";
+		projectName: string;
+		worktreeName: string;
+	} | null;
 	usage: {
 		tier?: string;
 		fiveHour?: { percent: number; resetMinutes?: number };

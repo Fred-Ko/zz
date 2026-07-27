@@ -21,10 +21,13 @@ import { hubRenderer } from "./tools/hub";
 import { inspectImageRenderer } from "./tools/inspect-image";
 import { ircRenderer } from "./tools/irc";
 import { jobRenderer } from "./tools/job";
+import { knowledgeCurateRenderer } from "./tools/knowledge-curate";
+import { knowledgeGroupRenderer } from "./tools/knowledge-group";
+import { knowledgeRecallRenderer } from "./tools/knowledge-recall";
+import { knowledgeReflectRenderer } from "./tools/knowledge-reflect";
+import { knowledgeRetainRenderer } from "./tools/knowledge-retain";
+import { knowledgeRetainDocumentRenderer } from "./tools/knowledge-retain-document";
 import { lspRenderer } from "./tools/lsp";
-import { recallRenderer } from "./tools/memory-recall";
-import { reflectRenderer } from "./tools/memory-reflect";
-import { retainRenderer } from "./tools/memory-retain";
 import { readRenderer } from "./tools/read";
 import { resolveRenderer } from "./tools/resolve";
 import { taskRenderer } from "./tools/task";
@@ -62,9 +65,12 @@ const RENDERERS: Record<string, ToolRenderer> = {
 	poll: jobRenderer,
 	cancel_job: jobRenderer,
 	lsp: lspRenderer,
-	recall: recallRenderer,
-	reflect: reflectRenderer,
-	retain: retainRenderer,
+	knowledge_curate: knowledgeCurateRenderer,
+	knowledge_group: knowledgeGroupRenderer,
+	knowledge_recall: knowledgeRecallRenderer,
+	knowledge_reflect: knowledgeReflectRenderer,
+	knowledge_retain: knowledgeRetainRenderer,
+	knowledge_retain_document: knowledgeRetainDocumentRenderer,
 	read: readRenderer,
 	resolve: resolveRenderer,
 	reject: resolveRenderer,

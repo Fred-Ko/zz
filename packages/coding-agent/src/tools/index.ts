@@ -12,14 +12,13 @@ import { checkPythonKernelAvailability } from "../eval/py/kernel";
 import { checkRubyKernelAvailability } from "../eval/rb/kernel";
 import type { ToolPathWithSource } from "../extensibility/custom-tools";
 import type { Skill } from "../extensibility/skills";
-import type { GoalModeState, GoalRuntime } from "../goals";
+import { type GoalModeState, type GoalRuntime, isZZWorkflowGoalState } from "../goals";
 import type { TaskLifecycleRuntime, TaskLifecycleState } from "../goals/task-lifecycle";
 import { GoalTool } from "../goals/tools/goal-tool";
-import type { HindsightSessionState } from "../hindsight/state";
 import type { LocalProtocolOptions } from "../internal-urls";
+import type { KnowledgeRuntime } from "../knowledge";
 import { LspTool } from "../lsp";
 import type { MCPManager } from "../mcp";
-import type { MnemopiSessionState } from "../mnemopi/state";
 import type { PlanModeState } from "../plan-mode/state";
 import type { AgentLifecycleManager } from "../registry/agent-lifecycle";
 import type { AgentRegistry } from "../registry/agent-registry";
@@ -40,7 +39,7 @@ import { AstEditTool } from "./ast-edit";
 import { AstGrepTool } from "./ast-grep";
 import { BashTool } from "./bash";
 import { BrowserTool } from "./browser";
-import { type BuiltinToolName, type HiddenToolName, normalizeToolNames } from "./builtin-names";
+import { type BuiltinToolName, type HiddenToolName, normalizeToolNames, ZZWORKFLOW_TOOL_NAMES } from "./builtin-names";
 import { type CheckpointState, CheckpointTool, type CompletedRewindState, RewindTool } from "./checkpoint";
 import { ComputerTool } from "./computer";
 import { DebugTool } from "./debug";
@@ -51,16 +50,25 @@ import { GlobTool } from "./glob";
 import { GrepTool } from "./grep";
 import { HubTool, isIrcEnabled } from "./hub";
 import { InspectImageTool } from "./inspect-image";
-import { LearnTool } from "./learn";
+import { KnowledgeCurateTool } from "./knowledge-curate";
+import { KnowledgeGroupTool } from "./knowledge-group";
+import { KnowledgeRecallTool } from "./knowledge-recall";
+import { KnowledgeReflectTool } from "./knowledge-reflect";
+import { KnowledgeRetainTool } from "./knowledge-retain";
+import { KnowledgeRetainDocumentTool } from "./knowledge-retain-document";
 import { ManageSkillTool } from "./manage-skill";
-import { MemoryEditTool } from "./memory-edit";
-import { MemoryRecallTool } from "./memory-recall";
-import { MemoryReflectTool } from "./memory-reflect";
-import { MemoryRetainTool } from "./memory-retain";
 import { wrapToolWithMetaNotice } from "./output-meta";
 import { ReadTool } from "./read";
 import type { PlanProposalHandler } from "./resolve";
 import { type TodoPhase, TodoTool } from "./todo";
+import {
+	ZZWorkflowGetStateTool,
+	ZZWorkflowPatchPlanTool,
+	ZZWorkflowProposePlanTool,
+	ZZWorkflowReportObservationTool,
+	ZZWorkflowReportStepResultTool,
+	ZZWorkflowSubmitVerificationTool,
+} from "./workflow-control";
 import { WriteTool } from "./write";
 import { isMountableUnderXdev, XdevRegistry } from "./xdev";
 import { YieldTool } from "./yield";
@@ -76,6 +84,7 @@ export * from "./ast-edit";
 export * from "./ast-grep";
 export * from "./bash";
 export * from "./browser";
+export * from "./builtin-names";
 export * from "./checkpoint";
 export * from "./computer";
 export * from "./computer/supervisor";
@@ -89,18 +98,20 @@ export * from "./grep";
 export * from "./hub";
 export * from "./image-gen";
 export * from "./inspect-image";
-export * from "./learn";
+export * from "./knowledge-curate";
+export * from "./knowledge-group";
+export * from "./knowledge-recall";
+export * from "./knowledge-reflect";
+export * from "./knowledge-retain";
+export * from "./knowledge-retain-document";
 export * from "./manage-skill";
-export * from "./memory-edit";
-export * from "./memory-recall";
-export * from "./memory-reflect";
-export * from "./memory-retain";
 export * from "./read";
 export * from "./resolve";
 export * from "./review";
 export * from "./todo";
 export * from "./tts";
 export * from "./vibe";
+export * from "./workflow-control";
 export * from "./write";
 export * from "./xdev";
 export * from "./yield";
@@ -231,10 +242,8 @@ export interface ToolSession {
 	trackEvalExecution?<T>(execution: Promise<T>, abortController: AbortController): Promise<T>;
 	/** Get session ID */
 	getSessionId?: () => string | null;
-	/** Get Hindsight runtime state for this agent session. */
-	getHindsightSessionState?: () => HindsightSessionState | undefined;
-	/** Get Mnemopi runtime state for this agent session. */
-	getMnemopiSessionState?: () => MnemopiSessionState | undefined;
+	/** Get the independent ZZ Knowledge runtime for this agent session. */
+	getKnowledgeRuntime?: () => Promise<KnowledgeRuntime | undefined>;
 	/** Agent identity used for IRC routing. Returns the registry id (e.g. "Main", "AuthLoader"). */
 	getAgentId?: () => string | null;
 	/** Look up a registered tool by name (used by the eval js backend's tool bridge). */
@@ -414,11 +423,18 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	todo: s => new TodoTool(s),
 	web_search: s => new WebSearchTool(s),
 	write: s => new WriteTool(s),
-	memory_edit: MemoryEditTool.createIf,
-	retain: MemoryRetainTool.createIf,
-	recall: MemoryRecallTool.createIf,
-	reflect: MemoryReflectTool.createIf,
-	learn: LearnTool.createIf,
+	knowledge_recall: KnowledgeRecallTool.createIf,
+	knowledge_retain: KnowledgeRetainTool.createIf,
+	knowledge_retain_document: KnowledgeRetainDocumentTool.createIf,
+	knowledge_reflect: KnowledgeReflectTool.createIf,
+	knowledge_curate: KnowledgeCurateTool.createIf,
+	knowledge_group: KnowledgeGroupTool.createIf,
+	zzw_get_state: s => new ZZWorkflowGetStateTool(s),
+	zzw_propose_plan: s => new ZZWorkflowProposePlanTool(s),
+	zzw_patch_plan: s => new ZZWorkflowPatchPlanTool(s),
+	zzw_report_observation: s => new ZZWorkflowReportObservationTool(s),
+	zzw_report_step_result: s => new ZZWorkflowReportStepResultTool(s),
+	zzw_submit_verification: s => new ZZWorkflowSubmitVerificationTool(s),
 	manage_skill: ManageSkillTool.createIf,
 };
 
@@ -443,6 +459,7 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 			: undefined;
 	const goalEnabled = session.settings.get("goal.enabled");
 	const goalModeActive = !restrictToolNames && goalEnabled && session.getGoalModeState?.()?.enabled === true;
+	const zzWorkflowActive = goalModeActive && isZZWorkflowGoalState(session.getGoalModeState?.());
 	if (goalModeActive && requestedTools && !requestedTools.includes("goal")) {
 		requestedTools.push("goal");
 	}
@@ -504,6 +521,11 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 	// Auto-include AST counterparts when their text-based sibling is present.
 	// Restricted callers own the active list and must not have it widened.
 	if (requestedTools && !restrictToolNames) {
+		if (zzWorkflowActive) {
+			for (const name of ZZWORKFLOW_TOOL_NAMES) {
+				if (!requestedTools.includes(name)) requestedTools.push(name);
+			}
+		}
 		if (goalModeActive && !requestedTools.includes("goal")) {
 			requestedTools.push("goal");
 		}
@@ -521,28 +543,20 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 		) {
 			requestedTools.push("ast_edit");
 		}
-		if (["hindsight", "mnemopi"].includes(session.settings.get("memory.backend") ?? "")) {
-			for (const name of ["recall", "retain", "reflect"]) {
+		if (session.settings.get("knowledge.enabled")) {
+			for (const name of [
+				"knowledge_recall",
+				"knowledge_retain",
+				"knowledge_retain_document",
+				"knowledge_reflect",
+				"knowledge_curate",
+				"knowledge_group",
+			]) {
 				if (!requestedTools.includes(name)) requestedTools.push(name);
 			}
 		}
-		if (session.settings.get("memory.backend") === "mnemopi" && !requestedTools.includes("memory_edit")) {
-			requestedTools.push("memory_edit");
-		}
-		// Auto-learn tools are gated by `autolearn.enabled` but, like the memory
-		// tools above, must also be force-included into an explicit requestedTools
-		// list so a restricted top-level session whose controller/guidance is
-		// active still exposes the tools the nudge points at. Gated to top-level
-		// (taskDepth 0): the controller only runs there, so a subagent's explicit
-		// tool whitelist must never be silently widened with write-capable tools.
-		if (session.settings.get("autolearn.enabled") && (session.taskDepth ?? 0) === 0) {
+		if (session.settings.get("knowledge.enabled") && (session.taskDepth ?? 0) === 0) {
 			if (!requestedTools.includes("manage_skill")) requestedTools.push("manage_skill");
-			if (
-				["hindsight", "mnemopi", "local"].includes(session.settings.get("memory.backend") ?? "") &&
-				!requestedTools.includes("learn")
-			) {
-				requestedTools.push("learn");
-			}
 		}
 	}
 	const allTools: Record<string, ToolFactory> = { ...BUILTIN_TOOLS, ...HIDDEN_TOOLS };
@@ -570,18 +584,18 @@ export async function createTools(session: ToolSession, toolNames?: string[]): P
 				!restrictToolNames && session.enableIrc !== false && isIrcEnabled(session.settings, session.taskDepth ?? 0)
 			);
 		}
-		if (name === "retain" || name === "recall" || name === "reflect") {
-			return ["hindsight", "mnemopi"].includes(session.settings.get("memory.backend") ?? "");
+		if (
+			name === "knowledge_recall" ||
+			name === "knowledge_retain" ||
+			name === "knowledge_retain_document" ||
+			name === "knowledge_reflect" ||
+			name === "knowledge_curate" ||
+			name === "knowledge_group"
+		) {
+			return session.settings.get("knowledge.enabled");
 		}
-		if (name === "memory_edit") return session.settings.get("memory.backend") === "mnemopi";
-		if (name === "manage_skill") return session.settings.get("autolearn.enabled") && (session.taskDepth ?? 0) === 0;
-		if (name === "learn") {
-			return (
-				session.settings.get("autolearn.enabled") &&
-				(session.taskDepth ?? 0) === 0 &&
-				["hindsight", "mnemopi", "local"].includes(session.settings.get("memory.backend") ?? "")
-			);
-		}
+		if (name === "manage_skill") return session.settings.get("knowledge.enabled") && (session.taskDepth ?? 0) === 0;
+		if (name.startsWith("zzw_")) return zzWorkflowActive && (session.taskDepth ?? 0) === 0;
 		if (name === "task") {
 			return canSpawnAtDepth(session.settings.get("task.maxRecursionDepth") ?? 2, session.taskDepth ?? 0);
 		}

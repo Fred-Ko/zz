@@ -17,18 +17,18 @@ import { safeSend } from "../utils/ipc";
 import { tinyModelDeviceSettingToEnv } from "./device";
 import { tinyModelDtypeSettingToEnv } from "./dtype";
 import {
+	isTinyClassifierLocalModelKey,
 	isTinyLocalModelKey,
-	isTinyMemoryLocalModelKey,
 	isTinyTitleLocalModelKey,
+	type TinyClassifierLocalModelKey,
 	type TinyLocalModelKey,
-	type TinyMemoryLocalModelKey,
 	type TinyTitleLocalModelKey,
 } from "./models";
 import type { TinyTitleProgressEvent, TinyTitleWorkerInbound, TinyTitleWorkerOutbound } from "./title-protocol";
 
 type PendingRequest =
 	| { kind: "generate"; modelKey: TinyTitleLocalModelKey; resolve: (title: string | null) => void }
-	| { kind: "complete"; modelKey: TinyMemoryLocalModelKey; resolve: (text: string | null) => void }
+	| { kind: "complete"; modelKey: TinyClassifierLocalModelKey; resolve: (text: string | null) => void }
 	| { kind: "download"; modelKey: TinyLocalModelKey; resolve: (result: TinyTitleDownloadResult) => void };
 
 export interface TinyTitleDownloadResult {
@@ -265,7 +265,7 @@ export class TinyTitleClient {
 		prompt: string,
 		options: { maxTokens?: number; signal?: AbortSignal } = {},
 	): Promise<string | null> {
-		if (!isTinyMemoryLocalModelKey(modelKey)) return null;
+		if (!isTinyClassifierLocalModelKey(modelKey)) return null;
 		if (options.signal?.aborted || this.#failedModels.has(modelKey)) return null;
 
 		try {

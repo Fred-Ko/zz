@@ -19,10 +19,10 @@ import {
 	AUTO_THINKING_MODEL_OPTIONS,
 	AUTO_THINKING_MODEL_VALUES,
 	ONLINE_AUTO_THINKING_MODEL_KEY,
-	ONLINE_MEMORY_MODEL_KEY,
+	ONLINE_CLASSIFIER_MODEL_KEY,
 	ONLINE_TINY_TITLE_MODEL_KEY,
-	TINY_MEMORY_MODEL_OPTIONS,
-	TINY_MEMORY_MODEL_VALUES,
+	TINY_CLASSIFIER_MODEL_OPTIONS,
+	TINY_CLASSIFIER_MODEL_VALUES,
 	TINY_TITLE_MODEL_OPTIONS,
 	TINY_TITLE_MODEL_VALUES,
 } from "../tiny/models";
@@ -75,7 +75,7 @@ export type SettingTab =
 	| "model"
 	| "interaction"
 	| "context"
-	| "memory"
+	| "knowledge"
 	| "files"
 	| "shell"
 	| "tools"
@@ -91,7 +91,7 @@ export const SETTING_TABS: SettingTab[] = [
 	"model",
 	"interaction",
 	"context",
-	"memory",
+	"knowledge",
 	"files",
 	"shell",
 	"tools",
@@ -105,7 +105,7 @@ export const TAB_METADATA: Record<SettingTab, { label: string; icon: `tab.${stri
 	model: { label: "Model", icon: "tab.model" },
 	interaction: { label: "Interaction", icon: "tab.interaction" },
 	context: { label: "Context", icon: "tab.context" },
-	memory: { label: "Memory", icon: "tab.memory" },
+	knowledge: { label: "Knowledge", icon: "tab.knowledge" },
 	files: { label: "Files", icon: "tab.files" },
 	shell: { label: "Shell", icon: "tab.shell" },
 	tools: { label: "Tools", icon: "tab.tools" },
@@ -134,7 +134,7 @@ export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 		"Git",
 	],
 	context: ["General", "Compaction", "Rules (TTSR)", "Experimental"],
-	memory: ["General", "Auto-Learn", "Mnemopi", "Workflow", "Hindsight"],
+	knowledge: ["General", "Bank", "Recall", "Retain", "Hindsight", "ZZWorkflow", "Workflow"],
 	files: ["Editing", "Reading", "Read Summaries", "LSP"],
 	shell: ["Bash", "Eval & Runtimes"],
 	tools: [
@@ -158,6 +158,7 @@ export type StatusLineSegmentId =
 	| "model"
 	| "mode"
 	| "path"
+	| "worktree"
 	| "git"
 	| "pr"
 	| "subagents"
@@ -302,7 +303,6 @@ const EMPTY_NUMBER_RECORD: Record<string, number> = {};
 const DEFAULT_CYCLE_ORDER: string[] = ["smol", "default", "slow"];
 const DEFAULT_TOOL_CALL_LOOP_EXEMPT_TOOLS: string[] = ["hub"];
 const EMPTY_MODEL_TAGS_RECORD: ModelTagsSettings = {};
-const HINDSIGHT_RECALL_TYPES_DEFAULT: string[] = ["world", "experience"];
 export const DEFAULT_BASH_INTERCEPTOR_RULES: BashInterceptorRule[] = [
 	{
 		pattern: "^\\s*(cat|head|tail|less|more)\\s+",
@@ -2530,541 +2530,244 @@ export const SETTINGS_SCHEMA = {
 
 	"branchSummary.reserveTokens": { type: "number", default: 16384 },
 
-	// Memories
-	// Legacy local-memory enable flag kept only for back-compat migration.
-	// Hidden from UI — users should use `memory.backend` instead.
-	"memories.enabled": {
+	// ZZ Knowledge System. This is independent from the removed OMP memory backends.
+	"knowledge.enabled": {
 		type: "boolean",
 		default: false,
-	},
-
-	"memories.maxRolloutsPerStartup": { type: "number", default: 64 },
-
-	"memories.maxRolloutAgeDays": { type: "number", default: 30 },
-
-	"memories.minRolloutIdleHours": { type: "number", default: 12 },
-
-	"memories.threadScanLimit": { type: "number", default: 300 },
-
-	"memories.maxRawMemoriesForGlobal": { type: "number", default: 200 },
-
-	"memories.stage1Concurrency": { type: "number", default: 8 },
-
-	"memories.stage1LeaseSeconds": { type: "number", default: 120 },
-
-	"memories.stage1RetryDelaySeconds": { type: "number", default: 120 },
-
-	"memories.phase2LeaseSeconds": { type: "number", default: 180 },
-
-	"memories.phase2RetryDelaySeconds": { type: "number", default: 180 },
-
-	"memories.phase2HeartbeatSeconds": { type: "number", default: 30 },
-
-	"memories.rolloutPayloadPercent": { type: "number", default: 0.7 },
-
-	"memories.phase1InputTokenLimit": { type: "number", default: 4000 },
-
-	"memories.fallbackTokenLimit": { type: "number", default: 16000 },
-
-	"memories.summaryInjectionTokenLimit": { type: "number", default: 5000 },
-
-	// Memory backend selector — picks between local memories pipeline,
-	// Mnemopi local SQLite, Hindsight remote memory, or off. The legacy
-	// `memories.enabled` flag is migration input only; see config/settings.ts.
-	"memory.backend": {
-		type: "enum",
-		values: ["off", "local", "hindsight", "mnemopi"] as const,
-		default: "off",
 		ui: {
-			tab: "memory",
+			tab: "knowledge",
 			group: "General",
-			label: "Memory Backend",
-			description: "Off, local summary pipeline, Mnemopi SQLite, or Hindsight remote memory",
-			options: [
-				{ value: "off", label: "Off", description: "No memory subsystem runs" },
-				{ value: "local", label: "Local", description: "Local rollout summarisation pipeline (memory_summary.md)" },
-				{ value: "hindsight", label: "Hindsight", description: "Vectorize Hindsight remote memory service" },
-				{
-					value: "mnemopi",
-					label: "Mnemopi",
-					description: "Local SQLite recall/retain backend with optional embeddings",
-				},
-			],
+			label: "ZZ Knowledge System",
+			description: "Use deliberate, evidence-gated long-term knowledge through Hindsight",
 		},
 	},
-
-	// Auto-Learn (experimental): post-stop nudge to capture lessons to memory
-	// and mint/enhance isolated managed skills under ~/.omp/agent/managed-skills.
-	// Master flag is default-off → zero footprint; sub-flags gate behaviour.
-	"autolearn.enabled": {
-		type: "boolean",
-		default: false,
+	"knowledge.provider": {
+		type: "enum",
+		values: ["hindsight"] as const,
+		default: "hindsight",
+	},
+	"knowledge.userId": {
+		type: "string",
+		default: "default",
 		ui: {
-			tab: "memory",
-			group: "Auto-Learn",
-			label: "Auto-Learn (experimental)",
-			description:
-				"After the agent stops, nudge it to capture lessons to memory and create/enhance isolated managed skills",
+			tab: "knowledge",
+			group: "General",
+			label: "User identity",
+			description: "Stable identity used to isolate personal knowledge",
 		},
 	},
-	"autolearn.autoContinue": {
-		type: "boolean",
-		default: false,
+	"knowledge.securityBoundary": {
+		type: "string",
+		default: "personal",
 		ui: {
-			tab: "memory",
-			group: "Auto-Learn",
-			label: "Auto-run capture at stop",
-			description:
-				"When on, auto-run one private capture turn at stop (uses extra tokens). When off, only standing auto-learn guidance remains.",
-			condition: "autolearnActive",
+			tab: "knowledge",
+			group: "General",
+			label: "Security boundary",
+			description: "Personal, company, or customer boundary containing one Global Bank and per-repository Banks",
 		},
 	},
-	// Config-file-only knob (numbers without `options` are hidden from the UI).
-	"autolearn.minToolCalls": { type: "number", default: 5 },
-
-	// Mnemopi local SQLite memory backend.
-	"mnemopi.dbPath": {
+	"knowledge.repositoryDisplayName": {
 		type: "string",
 		default: undefined,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi DB Path",
-			description: "Optional SQLite DB path. Defaults to the agent memories directory.",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "General",
+			label: "Repository display name",
+			description: "Optional human-readable repository name shown for its Hindsight bank",
 		},
 	},
-	"mnemopi.bank": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Bank",
-			description: "Optional shared bank base name. Per-project modes derive project-local banks from it.",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.scoping": {
+	"knowledge.bank.managedConfigMode": {
 		type: "enum",
-		values: ["global", "per-project", "per-project-tagged"] as const,
-		default: "per-project",
+		values: ["merge", "inspect-only"] as const,
+		default: "merge",
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Scoping",
-			description:
-				"global = one shared bank; per-project = isolated bank per cwd; per-project-tagged = project-local writes plus global recall visibility",
-			options: [
-				{
-					value: "global",
-					label: "Global",
-					description: "One shared Mnemopi bank for every project",
-				},
-				{
-					value: "per-project",
-					label: "Per project",
-					description: "Project-local Mnemopi bank per cwd basename",
-				},
-				{
-					value: "per-project-tagged",
-					label: "Per project (tagged)",
-					description: "Write to a project-local bank but merge project + shared recall results",
-				},
-			],
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Bank",
+			label: "Managed bank configuration",
+			description: "Apply the versioned ZZ engineering profile, or only report configuration drift",
 		},
 	},
-	"mnemopi.embeddingVariant": {
-		type: "enum",
-		values: ["en", "multilingual"] as const,
-		default: "en",
+	"knowledge.bank.maxBanksPerUser": {
+		type: "number",
+		default: 4,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Embedding variant",
+			tab: "knowledge",
+			group: "Bank",
+			label: "Maximum security boundaries",
 			description:
-				"Local embedding model family. en = stronger English model; multilingual = cross-language model. Changing this rebuilds existing memory embeddings on next start.",
-			options: [
-				{
-					value: "en",
-					label: "English (bge-base-en-v1.5)",
-					description: "BAAI/bge-base-en-v1.5 (768d), English-only",
-				},
-				{
-					value: "multilingual",
-					label: "Multilingual (multilingual-e5-large)",
-					description: "intfloat/multilingual-e5-large (1024d), cross-language recall",
-				},
-			],
-			condition: "mnemopiActive",
+				"Distinct security boundaries allowed per user; repository Banks inside one boundary are unlimited",
 		},
 	},
-	"mnemopi.autoRecall": {
+	"knowledge.recall.quickTokens": {
+		type: "number",
+		default: 1_000,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Quick recall tokens",
+			description: "Budget for duplicate checks and single-fact lookup",
+		},
+	},
+	"knowledge.recall.normalTokens": {
+		type: "number",
+		default: 4_000,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Normal recall tokens",
+			description: "Budget for ordinary implementation context",
+		},
+	},
+	"knowledge.recall.deepTokens": {
+		type: "number",
+		default: 10_000,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Deep recall tokens",
+			description: "Budget for planning, debugging, and replanning",
+		},
+	},
+	"knowledge.recall.forensicTokens": {
+		type: "number",
+		default: 20_000,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Forensic recall tokens",
+			description: "Upper budget for complex incident and conflict analysis",
+		},
+	},
+	"knowledge.recall.workingSetTtlSeconds": { type: "number", default: 900 },
+	"knowledge.mentalModels.enabled": {
 		type: "boolean",
 		default: true,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Auto Recall",
-			description: "Recall local memories into the first turn of each session",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Recall",
+			label: "Mental model orientation",
+			description: "Load one user and up to four repository summaries for session orientation",
 		},
 	},
-	"mnemopi.autoRetain": {
+	"knowledge.mentalModels.maxPerRepo": {
+		type: "number",
+		default: 4,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Repository mental models",
+			description: "Maximum repository summaries to load; ZZ caps this at four",
+		},
+	},
+	"knowledge.mentalModels.orientationTokens": {
+		type: "number",
+		default: 2_500,
+		ui: {
+			tab: "knowledge",
+			group: "Recall",
+			label: "Mental model tokens",
+			description: "Approximate session-orientation budget reserved for curated summaries",
+		},
+	},
+	"knowledge.retain.deduplicateBeforeRetain": {
 		type: "boolean",
 		default: true,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Auto Retain",
-			description: "Retain completed conversation turns into local Mnemopi memory",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Retain",
+			label: "Check duplicates before retain",
+			description: "Run a narrow recall before accepting a durable knowledge record",
 		},
 	},
-	"mnemopi.polyphonicRecall": {
+	"knowledge.retain.rejectAgentInferredRepoKnowledge": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Polyphonic Recall",
-			description: "Enable 4-voice recall (vector, graph, fact, temporal) fused with reciprocal rank fusion",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Retain",
+			label: "Reject inferred long-term facts",
+			description: "Keep agent-inferred hypotheses task-scoped until stronger evidence exists",
 		},
 	},
-	"mnemopi.enhancedRecall": {
+	"knowledge.retain.redactionEnabled": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Enhanced Recall",
-			description: "Enable the tiered query result cache for repeated and similar recall queries",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Retain",
+			label: "Redact secrets",
+			description: "Apply the session redactor before records enter the durable outbox",
 		},
 	},
-	"mnemopi.proactiveLinking": {
+	"knowledge.retain.showReceipts": {
 		type: "boolean",
-		default: false,
+		default: true,
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Proactive Linking",
-			description:
-				"Ingest new memories into the episodic graph as they are stored, linking them to related entities and memories",
-			condition: "mnemopiActive",
+			tab: "knowledge",
+			group: "Retain",
+			label: "Show knowledge receipts",
+			description: "Report whether a proposed record was queued, deduplicated, or rejected",
 		},
 	},
-	"mnemopi.noEmbeddings": {
-		type: "boolean",
-		default: false,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Disable Embeddings",
-			description: "Force deterministic FTS-only recall instead of vector embeddings",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.embeddingModel": {
+	"knowledge.retain.outboxRetryMax": { type: "number", default: 20 },
+	"knowledge.hindsight.apiUrl": {
 		type: "string",
-		default: undefined,
+		default: "http://127.0.0.1:8888",
 		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Embedding Model",
-			description:
-				"Advanced: explicit embedding model id that overrides the variant. Leave empty to use mnemopi.embeddingVariant.",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.embeddingApiUrl": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Embedding API URL",
-			description: "Optional OpenAI-compatible embedding endpoint passed to Mnemopi",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.embeddingApiKey": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi Embedding API Key",
-			description: "Optional embedding API key passed to Mnemopi",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.llmMode": {
-		type: "enum",
-		values: ["none", "smol", "remote"] as const,
-		default: "smol",
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi LLM Mode",
-			description:
-				"Use no LLM, the online tiny model (the TINY role from /models, else @smol), or a remote OpenAI-compatible endpoint",
-			condition: "mnemopiActive",
-			options: [
-				{ value: "none", label: "None", description: "Disable Mnemopi LLM-backed extraction" },
-				{
-					value: "smol",
-					label: "Online (tiny)",
-					description: "Use the online tiny model (the TINY role from /models, else @smol)",
-				},
-				{ value: "remote", label: "Remote", description: "Use the Mnemopi remote LLM settings below" },
-			],
-		},
-	},
-	"mnemopi.llmBaseUrl": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi LLM Base URL",
-			description: "Optional OpenAI-compatible LLM endpoint for Mnemopi remote mode",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.llmApiKey": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi LLM API Key",
-			description: "Optional LLM API key for Mnemopi remote mode",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.llmModel": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Mnemopi",
-			label: "Mnemopi LLM Model",
-			description: "Optional LLM model name for Mnemopi remote mode",
-			condition: "mnemopiActive",
-		},
-	},
-	"mnemopi.retainEveryNTurns": { type: "number", default: 4 },
-	"mnemopi.recallLimit": { type: "number", default: 8 },
-	"mnemopi.recallContextTurns": { type: "number", default: 3 },
-	"mnemopi.recallMaxQueryChars": { type: "number", default: 4000 },
-	"mnemopi.injectionTokenLimit": { type: "number", default: 5000 },
-	"mnemopi.debug": { type: "boolean", default: false },
-
-	// Shared task workflow coordinator
-	"workflow.coordinatorUrl": {
-		type: "string",
-		default: undefined,
-		ui: {
-			tab: "memory",
-			group: "Workflow",
-			label: "Workflow Coordinator URL",
-			description: "Shared task registry URL; unset keeps task lifecycle local to this session",
-		},
-	},
-	"workflow.machineIdFile": { type: "string", default: undefined },
-	"workflow.requestTimeoutMs": { type: "number", default: 2_500 },
-	"workflow.heartbeatIntervalSeconds": { type: "number", default: 15 },
-	"workflow.staleAfterSeconds": { type: "number", default: 60 },
-	"workflow.workspaceLeaseSeconds": { type: "number", default: 90 },
-	"workflow.degradedAllowExecution": { type: "boolean", default: true },
-	"workflow.checkpointRemote": { type: "string", default: undefined },
-
-	// Hindsight (https://hindsight.vectorize.io)
-	"hindsight.apiUrl": {
-		type: "string",
-		default: "http://localhost:8888",
-		ui: {
-			tab: "memory",
+			tab: "knowledge",
 			group: "Hindsight",
 			label: "Hindsight API URL",
-			description: "Hindsight server URL (Cloud or self-hosted)",
-			condition: "hindsightActive",
+			description: "Hindsight endpoint used only by the ZZ Knowledge System",
 		},
 	},
-
-	"hindsight.apiToken": {
+	"knowledge.hindsight.apiToken": {
 		type: "string",
 		default: undefined,
 		ui: {
-			tab: "memory",
+			tab: "knowledge",
 			group: "Hindsight",
-			label: "Hindsight API Token",
-			description: "Bearer token for authenticated Hindsight servers",
-			condition: "hindsightActive",
+			label: "Hindsight API token",
+			description: "Bearer token for the configured Hindsight service",
 			secret: true,
 		},
 	},
+	"knowledge.hindsight.requestTimeoutMs": { type: "number", default: 30_000 },
+	"knowledge.hindsight.reflectTimeoutMs": { type: "number", default: 120_000 },
+	"knowledge.hindsight.recallTimeoutMs": { type: "number", default: 30_000 },
+	"knowledge.hindsight.retainTimeoutMs": { type: "number", default: 60_000 },
 
-	"hindsight.bankId": {
-		type: "string",
-		default: undefined,
+	// Local ZZWorkflow registry
+	"zzworkflow.heartbeatIntervalSeconds": {
+		type: "number",
+		default: 15,
 		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Bank ID",
-			description: "Memory bank identifier (default: project name)",
-			condition: "hindsightActive",
+			tab: "knowledge",
+			group: "ZZWorkflow",
+			label: "Local Lease Heartbeat",
+			description: "Seconds between local ZZWorkflow lease heartbeats",
 		},
 	},
-
-	"hindsight.bankIdPrefix": { type: "string", default: undefined },
-	"hindsight.scoping": {
+	"zzworkflow.workspaceLeaseSeconds": {
+		type: "number",
+		default: 90,
+		ui: {
+			tab: "knowledge",
+			group: "ZZWorkflow",
+			label: "Local Workspace Lease",
+			description: "Seconds before an abandoned local ZZWorkflow workspace lease may be taken over",
+		},
+	},
+	"zzworkflow.planPatchApproval": {
 		type: "enum",
-		values: ["global", "per-project", "per-project-tagged"] as const,
-		default: "per-project-tagged",
+		values: ["material", "always"] as const,
+		default: "material",
 		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Scoping",
-			description:
-				"global = one shared bank; per-project = isolated bank per cwd; per-project-tagged = shared bank with project tags so global + project memories merge on recall",
-			options: [
-				{
-					value: "global",
-					label: "Global",
-					description: "One shared bank — every project sees the same memories",
-				},
-				{
-					value: "per-project",
-					label: "Per project",
-					description: "Isolated bank per cwd basename — projects cannot see each other's memories",
-				},
-				{
-					value: "per-project-tagged",
-					label: "Per project (tagged)",
-					description:
-						"Shared bank, retains tagged with project:<cwd>. Recall surfaces project + untagged global memories together",
-				},
-			],
-			condition: "hindsightActive",
+			tab: "knowledge",
+			group: "ZZWorkflow",
+			label: "Plan Patch Approval",
+			description: "Re-approve only material Plan changes, or require approval for every patch",
 		},
 	},
-	"hindsight.bankMission": { type: "string", default: undefined },
-	"hindsight.retainMission": { type: "string", default: undefined },
-	"hindsight.integrationMode": {
-		type: "enum",
-		values: ["legacy", "workflow-managed"] as const,
-		default: "legacy",
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Integration Mode",
-			description:
-				"workflow-managed disables transcript auto-memory and retains only curated, verified task knowledge",
-			condition: "hindsightActive",
-		},
-	},
-	"hindsight.exposeModelTools": { type: "boolean", default: false },
-	"hindsight.userId": { type: "string", default: "default" },
-	"hindsight.workflowTaskTokens": { type: "number", default: 1_800 },
-	"hindsight.workflowRepoTokens": { type: "number", default: 1_200 },
-	"hindsight.workflowUserTokens": { type: "number", default: 600 },
-	"hindsight.outboxRetryMax": { type: "number", default: 20 },
-	"hindsight.redactionEnabled": { type: "boolean", default: true },
-
-	"hindsight.autoRecall": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Auto Recall",
-			description: "Recall memories on the first turn of each session",
-			condition: "hindsightActive",
-		},
-	},
-	"hindsight.autoRetain": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Auto Retain",
-			description: "Retain transcript every N turns and at session boundaries",
-			condition: "hindsightActive",
-		},
-	},
-
-	"hindsight.retainMode": {
-		type: "enum",
-		values: ["full-session", "last-turn"] as const,
-		default: "full-session",
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Retain Mode",
-			description: "full-session = upsert one document per session, last-turn = chunked",
-			options: [
-				{
-					value: "full-session",
-					label: "Full session",
-					description: "Upsert one document per session (recommended)",
-				},
-				{ value: "last-turn", label: "Last turn", description: "Chunked retention sliced by turn boundaries" },
-			],
-			condition: "hindsightActive",
-		},
-	},
-	"hindsight.retainEveryNTurns": { type: "number", default: 3 },
-	"hindsight.retainOverlapTurns": { type: "number", default: 2 },
-	"hindsight.retainContext": { type: "string", default: "omp" },
-
-	"hindsight.recallBudget": {
-		type: "enum",
-		values: ["low", "mid", "high"] as const,
-		default: "mid",
-	},
-	"hindsight.recallMaxTokens": { type: "number", default: 1024 },
-	"hindsight.recallContextTurns": { type: "number", default: 1 },
-	"hindsight.recallMaxQueryChars": { type: "number", default: 800 },
-	"hindsight.recallTypes": { type: "array", default: HINDSIGHT_RECALL_TYPES_DEFAULT },
-
-	"hindsight.debug": { type: "boolean", default: false },
-
-	"hindsight.requestTimeoutMs": { type: "number", default: 30_000 },
-	"hindsight.reflectTimeoutMs": { type: "number", default: 120_000 },
-	"hindsight.recallTimeoutMs": { type: "number", default: 30_000 },
-	"hindsight.retainTimeoutMs": { type: "number", default: 60_000 },
-
-	"hindsight.mentalModelsEnabled": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Mental Models",
-			description:
-				"Read curated reflect summaries (mental models) into developer instructions at boot. Loads existing models on the bank — does not write. Pair with hindsight.mentalModelAutoSeed to also auto-create the built-in seed set.",
-			condition: "hindsightActive",
-		},
-	},
-	"hindsight.mentalModelAutoSeed": {
-		type: "boolean",
-		default: true,
-		ui: {
-			tab: "memory",
-			group: "Hindsight",
-			label: "Hindsight Mental Model Auto-Seed",
-			description:
-				"At session start, create any built-in mental models (project-conventions, project-decisions, user-preferences) that do not yet exist on the bank.",
-			condition: "hindsightActive",
-		},
-	},
-	"hindsight.mentalModelRefreshIntervalMs": { type: "number", default: 5 * 60 * 1000 },
-	"hindsight.mentalModelMaxRenderChars": { type: "number", default: 16_000 },
 
 	// TTSR
 	"ttsr.enabled": {
@@ -4987,7 +4690,7 @@ export const SETTINGS_SCHEMA = {
 			group: "Tiny Model",
 			label: "Tiny Model Device",
 			description:
-				"ONNX execution provider for local tiny models (titles + memory). Default uses CPU-only inference. The PI_TINY_DEVICE env var overrides this.",
+				"ONNX execution provider for local title and classifier models. Default uses CPU-only inference. The PI_TINY_DEVICE env var overrides this.",
 			options: TINY_MODEL_DEVICE_SETTING_OPTIONS,
 		},
 	},
@@ -5004,21 +4707,6 @@ export const SETTINGS_SCHEMA = {
 			options: TINY_MODEL_DTYPE_SETTING_OPTIONS,
 		},
 	},
-	"providers.memoryModel": {
-		type: "enum",
-		values: TINY_MEMORY_MODEL_VALUES,
-		default: ONLINE_MEMORY_MODEL_KEY,
-		ui: {
-			tab: "memory",
-			group: "General",
-			label: "Memory Model",
-			description:
-				"Mnemopi LLM for fact extraction + consolidation: online (the TINY role from /models, else smol/remote) by default, or a local on-device model",
-			condition: "mnemopiActive",
-			options: TINY_MEMORY_MODEL_OPTIONS,
-		},
-	},
-
 	"providers.autoThinkingModel": {
 		type: "enum",
 		values: AUTO_THINKING_MODEL_VALUES,
@@ -5046,8 +4734,8 @@ export const SETTINGS_SCHEMA = {
 	},
 	"providers.unexpectedStopModel": {
 		type: "enum",
-		values: TINY_MEMORY_MODEL_VALUES,
-		default: ONLINE_MEMORY_MODEL_KEY,
+		values: TINY_CLASSIFIER_MODEL_VALUES,
+		default: ONLINE_CLASSIFIER_MODEL_KEY,
 		ui: {
 			tab: "providers",
 			group: "Tiny Model",
@@ -5055,7 +4743,7 @@ export const SETTINGS_SCHEMA = {
 			description:
 				"Classifier for unexpected-stop detection: online (the TINY role from /models, else smol) by default, or a local on-device model.",
 			condition: "unexpectedStopDetection",
-			options: TINY_MEMORY_MODEL_OPTIONS,
+			options: TINY_CLASSIFIER_MODEL_OPTIONS,
 		},
 	},
 
@@ -5500,24 +5188,6 @@ export interface RetrySettings {
 	usageReservePolicy: "confirm" | "auto" | "fail-closed";
 }
 
-export interface MemoriesSettings {
-	enabled: boolean;
-	maxRolloutsPerStartup: number;
-	maxRolloutAgeDays: number;
-	minRolloutIdleHours: number;
-	threadScanLimit: number;
-	maxRawMemoriesForGlobal: number;
-	stage1Concurrency: number;
-	stage1LeaseSeconds: number;
-	stage1RetryDelaySeconds: number;
-	phase2LeaseSeconds: number;
-	phase2RetryDelaySeconds: number;
-	phase2HeartbeatSeconds: number;
-	rolloutPayloadPercent: number;
-	fallbackTokenLimit: number;
-	summaryInjectionTokenLimit: number;
-}
-
 export interface TodoCompletionSettings {
 	enabled: boolean;
 	maxReminders: number;
@@ -5640,7 +5310,6 @@ export interface GroupTypeMap {
 	title: TitleSettings;
 	contextPromotion: ContextPromotionSettings;
 	retry: RetrySettings;
-	memories: MemoriesSettings;
 	branchSummary: BranchSummarySettings;
 	skills: SkillsSettings;
 	commit: CommitSettings;

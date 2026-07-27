@@ -216,6 +216,7 @@ async function makeHarness(opts?: { readOnly?: boolean }): Promise<GuestUiHarnes
 		loadingAnimation: undefined,
 		statusLine: {
 			setCollabStatus: () => {},
+			setStandaloneMainStatus: () => {},
 			invalidate: () => {},
 			resetActiveTime: () => {},
 			markActivityStart: () => {},
@@ -468,6 +469,7 @@ function makeHostContext(): InteractiveModeContext {
 		eventBus: undefined,
 		statusLine: {
 			setCollabStatus: () => {},
+			setStandaloneMainStatus: () => {},
 			invalidate: () => {},
 			getCachedContextBreakdown: () => ({ usedTokens: 0, contextWindow: 0 }),
 		},

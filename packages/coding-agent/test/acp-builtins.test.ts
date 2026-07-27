@@ -53,6 +53,17 @@ interface FakeAcpBuiltinSession {
 	setModel(model: unknown): Promise<void>;
 	listResetCredits: () => Promise<ResetCreditAccountStatus[]>;
 	redeemResetCredit: (target: ResetCreditTarget) => Promise<ResetCreditRedeemOutcome>;
+	getKnowledgeRuntime(): Promise<{
+		status(): Promise<{
+			enabled: boolean;
+			provider: "hindsight";
+			securityBoundary: string;
+			queued: number;
+			pendingReviews: number;
+		}>;
+		listReviews(): Promise<[]>;
+		flushOutbox(): Promise<void>;
+	}>;
 }
 
 interface FakeAcpBuiltinSessionManager {
@@ -157,6 +168,19 @@ function createRuntime() {
 		getContextUsage: () => undefined,
 		getAvailableModels: () => [] as Array<{ provider: string; id: string; contextWindow?: number }>,
 		async setModel(_model: unknown) {},
+		async getKnowledgeRuntime() {
+			return {
+				status: async () => ({
+					enabled: false,
+					provider: "hindsight" as const,
+					securityBoundary: "personal",
+					queued: 0,
+					pendingReviews: 0,
+				}),
+				listReviews: async () => [],
+				flushOutbox: async () => {},
+			};
+		},
 	};
 	const typedSession = session as unknown as AgentSession & FakeAcpBuiltinSession;
 	fakeSessionManager = {
@@ -810,12 +834,12 @@ describe("wave 3 commands", () => {
 		}
 	});
 
-	// /memory
-	it("/memory unknown: returns usage message", async () => {
+	// /knowledge
+	it("/knowledge unknown: returns usage message", async () => {
 		const { output, runtime } = createRuntime();
-		const result = await executeAcpBuiltinSlashCommand("/memory unknownverb", runtime);
+		const result = await executeAcpBuiltinSlashCommand("/knowledge unknownverb", runtime);
 		expect(result).toEqual({ consumed: true });
-		expect(output[0]).toContain("Usage: /memory");
+		expect(output[0]).toContain("사용법: /knowledge");
 	});
 
 	// /todo start fuzzy match

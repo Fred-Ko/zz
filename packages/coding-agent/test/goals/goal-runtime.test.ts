@@ -112,7 +112,11 @@ function createHarness(
 describe("goal runtime", () => {
 	it("revises an unfinished goal in place and emits lifecycle commitment events", async () => {
 		const harness = createHarness();
-		const created = await harness.runtime.createGoal({ objective: "Ship recovery", tokenBudget: 100 });
+		const created = await harness.runtime.createGoal({
+			objective: "Ship recovery",
+			tokenBudget: 100,
+			controller: "zzworkflow",
+		});
 		const revised = await harness.runtime.reviseGoal({
 			objective: "Ship recovery without Redis",
 			tokenBudget: 120,
@@ -147,7 +151,7 @@ describe("goal runtime", () => {
 
 	it("advances wall-clock accounting only by persisted whole seconds", async () => {
 		const harness = createHarness({
-			state: { enabled: true, mode: "active", goal: createGoal() },
+			state: { enabled: true, mode: "active", controller: "zzworkflow", goal: createGoal() },
 		});
 
 		harness.runtime.onTurnStart("turn-1", createUsage());
@@ -387,7 +391,7 @@ describe("goal runtime", () => {
 
 	it("keeps the goal active when the completion readiness gate rejects", async () => {
 		const harness = createHarness({
-			state: { enabled: true, mode: "active", goal: createGoal() },
+			state: { enabled: true, mode: "active", controller: "zzworkflow", goal: createGoal() },
 			assertGoalCompletionReady: async () => {
 				throw new Error("verification is stale");
 			},

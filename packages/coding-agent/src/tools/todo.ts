@@ -842,6 +842,29 @@ export class TodoTool implements AgentTool<typeof todoSchema, TodoToolDetails> {
 		}
 		const entry = resolved;
 		const op = entry.op;
+		const lifecycle = this.session.getTaskLifecycleState?.();
+		const zzWorkflowActive = this.session.getGoalModeState?.()?.controller === "zzworkflow";
+		if (
+			op !== "view" &&
+			zzWorkflowActive &&
+			lifecycle &&
+			lifecycle.phase !== "COMPLETED" &&
+			lifecycle.phase !== "ABANDONED" &&
+			lifecycle.phase !== "FAILED"
+		) {
+			return {
+				content: [
+					{
+						type: "text",
+						text:
+							"활성 ZZWorkflow에서는 Todo가 Plan DAG의 읽기 전용 화면입니다. " +
+							"계획 변경은 zzw_propose_plan 또는 zzw_patch_plan을 사용하세요.",
+					},
+				],
+				details: { op, phases: previousPhases, storage },
+				isError: true,
+			};
+		}
 		// Pure-view calls are reads: no normalization, no state write.
 		const readOnly = op === "view";
 		const { phases: updated, errors } = readOnly

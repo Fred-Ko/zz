@@ -61,6 +61,17 @@ export class SkillProtocolHandler implements ProtocolHandler {
 		const urlPath = url.pathname;
 		const hasRelativePath = urlPath && urlPath !== "/" && urlPath !== "";
 
+		if (!hasRelativePath && context?.pathOnly !== true && skill.content !== undefined) {
+			return {
+				url: url.href,
+				content: skill.content,
+				contentType: "text/markdown",
+				size: Buffer.byteLength(skill.content, "utf-8"),
+				sourcePath: skill.filePath,
+				notes: [],
+			};
+		}
+
 		if (hasRelativePath) {
 			const relativePath = decodeURIComponent(urlPath.slice(1));
 			validateRelativePath(relativePath);

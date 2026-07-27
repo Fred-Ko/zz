@@ -869,7 +869,7 @@ export class SessionManager {
 		}
 
 		// Hot path: append synchronously so the entry is durable the instant this
-		// returns (file/memory writers perform the write in-body). Never routed
+		// returns (file/state writers perform the write in-body). Never routed
 		// through the async disk chain — durability must hold without a flush().
 		// A mid-close writer leaves `#writer` undefined, so `#appendWriter` simply
 		// opens a fresh append handle and the entry still lands.

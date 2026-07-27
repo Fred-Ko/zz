@@ -1,6 +1,38 @@
 import { describe, expect, it, mock } from "bun:test";
 import type { InteractiveModeContext } from "@oh-my-pi/pi-coding-agent/modes/types";
-import { executeBuiltinSlashCommand } from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
+import {
+	BUILTIN_SLASH_COMMANDS,
+	executeBuiltinSlashCommand,
+} from "@oh-my-pi/pi-coding-agent/slash-commands/builtin-registry";
+
+describe("Goal and ZZWorkflow command boundaries", () => {
+	it("keeps original Goal commands and advertises dedicated ZZW commands without the retired /work alias", () => {
+		const names = BUILTIN_SLASH_COMMANDS.map(command => command.name);
+
+		expect(names).toContain("goal");
+		expect(names).toContain("guided-goal");
+		expect(names).toContain("zzw-goal");
+		expect(names).toContain("zzw-guided-goal");
+		expect(names).toContain("zzw");
+		expect(names).not.toContain("work");
+	});
+
+	it("advertises Plan lineage inspection commands", () => {
+		const command = BUILTIN_SLASH_COMMANDS.find(candidate => candidate.name === "zzw");
+		const subcommands = command?.subcommands?.map(subcommand => subcommand.name);
+
+		expect(subcommands).toEqual([
+			"status",
+			"plan",
+			"history",
+			"diff",
+			"why",
+			"evidence",
+			"operations",
+			"approve-plan",
+		]);
+	});
+});
 
 /**
  * Build a minimal ctx that simulates plan/goal-mode handlers.

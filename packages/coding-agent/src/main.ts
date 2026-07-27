@@ -144,10 +144,6 @@ const HOST_DEFAULTED_SETTING_PATHS: SettingPath[] = [
 	"task.disabledAgents",
 	"task.agentModelOverrides",
 	"task.agentPrewalk",
-	// Memory subsystems are off-by-default for RPC/ACP hosts; embedders that want
-	// memory should opt in explicitly through their own settings layer.
-	"memory.backend",
-	"memories.enabled",
 	// Advisor is interactive-session assistance. Protocol hosts opt in explicitly
 	// instead of inheriting a user's globally-enabled local preference, and when
 	// they do opt in they get the default tuning rather than the user's local tuning.

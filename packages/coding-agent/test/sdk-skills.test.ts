@@ -51,13 +51,13 @@ describe("createAgentSession skills option", () => {
 
 	beforeEach(() => {
 		tempDir = path.join(os.tmpdir(), `pi-sdk-test-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-		// Create skill in .omp/skills/ for native project-level discovery
-		skillsDir = path.join(tempDir, ".omp", "skills", "test-skill");
+		// Create skill in .zz/skills/ for native project-level discovery
+		skillsDir = path.join(tempDir, ".zz", "skills", "test-skill");
 		fs.mkdirSync(skillsDir, { recursive: true });
 		originalHome = process.env.HOME;
 		tempHomeDir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-sdk-home-"));
 		process.env.HOME = tempHomeDir;
-		const nativeUserSkillsDir = path.join(tempHomeDir, ".omp", "agent", "skills");
+		const nativeUserSkillsDir = path.join(tempHomeDir, ".zz", "agent", "skills");
 		fs.mkdirSync(nativeUserSkillsDir, { recursive: true });
 
 		// Create a test skill in the pi skills directory
@@ -120,7 +120,7 @@ Loaded via symbolic link.
 	});
 
 	it("should still discover project skills when user skills directory is missing", async () => {
-		const userAgentDir = path.join(tempHomeDir, ".omp", "agent");
+		const userAgentDir = path.join(tempHomeDir, ".zz", "agent");
 		removeSyncWithRetries(path.join(userAgentDir, "skills"));
 		fs.writeFileSync(path.join(userAgentDir, "placeholder.txt"), "placeholder");
 
@@ -146,7 +146,7 @@ Loaded via symbolic link.
 
 		expect(session.skills.some((s: Skill) => s.name === "runtime-added-skill")).toBe(false);
 
-		const runtimeSkillDir = path.join(tempDir, ".omp", "skills", "runtime-added-skill");
+		const runtimeSkillDir = path.join(tempDir, ".zz", "skills", "runtime-added-skill");
 		fs.mkdirSync(runtimeSkillDir, { recursive: true });
 		fs.writeFileSync(
 			path.join(runtimeSkillDir, "SKILL.md"),
@@ -174,10 +174,10 @@ This skill is added after session creation.
 
 	it("manage_skill hot-registers managed skills in the active session", async () => {
 		const originalAgentDir = getAgentDir();
-		const managedAgentDir = path.join(tempHomeDir, ".omp", "agent");
+		const managedAgentDir = path.join(tempHomeDir, ".zz", "agent");
 		setAgentDir(managedAgentDir);
 		const settings = createIsolatedSkillsSettings();
-		settings.set("autolearn.enabled", true);
+		settings.set("knowledge.enabled", true);
 		const { session } = await createAgentSession({
 			cwd: tempDir,
 			agentDir: managedAgentDir,

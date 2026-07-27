@@ -13,23 +13,36 @@ Package-specific references:
 - [MCP server/tool authoring](../../docs/mcp-server-tool-authoring.md)
 - [DEVELOPMENT](./DEVELOPMENT.md)
 
-## Memory backends
+## ZZ Knowledge
 
-The agent supports three mutually-exclusive memory backends, selected via the `memory.backend` setting (Settings → Memory tab, or `~/.zz/agent/config.yml`):
+ZZ Knowledge is an independent, opt-in long-term knowledge layer backed by
+[Hindsight](https://hindsight.vectorize.io). It is not an OMP Memory backend:
+the legacy local memory, Mnemopi, transcript auto-retain/auto-recall, `/memory`,
+`memory://`, and old model tools are not part of the runtime.
 
-- `off` (default) — no memory subsystem runs.
-- `local` — existing rollout-summarisation pipeline; writes `memory_summary.md` and consolidated artifacts under the agent dir.
-- `hindsight` — talks to a [Hindsight](https://hindsight.vectorize.io) server (Cloud or self-hosted Docker), retains transcripts every Nth user turn, recalls memories on the first turn of a session, and exposes `retain`, `recall`, and `reflect`.
+Enable it in `~/.zz/agent/config.yml`:
 
-### Hindsight quickstart
+```yaml
+knowledge:
+  enabled: true
+  userId: local
+  securityBoundary: personal
+  hindsight:
+    apiUrl: http://localhost:8888
+```
 
-1. Run a Hindsight server (Cloud or `docker run -p 8888:8888 ghcr.io/vectorize-io/hindsight:latest`).
-2. Set `memory.backend = "hindsight"` and `hindsight.apiUrl = "http://localhost:8888"` (or your Cloud URL).
-3. Optional environment overrides (env wins over settings):
-   - `HINDSIGHT_API_URL`, `HINDSIGHT_API_TOKEN` — connection
-   - `HINDSIGHT_BANK_ID`, `HINDSIGHT_DYNAMIC_BANK_ID`, `HINDSIGHT_AGENT_NAME` — bank addressing
-   - `HINDSIGHT_AUTO_RECALL`, `HINDSIGHT_AUTO_RETAIN`, `HINDSIGHT_RETAIN_MODE` — lifecycle
-   - `HINDSIGHT_RECALL_BUDGET`, `HINDSIGHT_RECALL_MAX_TOKENS` — recall sizing
-   - `HINDSIGHT_BANK_MISSION`, `HINDSIGHT_DEBUG`
+Use `/knowledge status` to inspect the connection and current Global/Repository Banks,
+`/knowledge banks` to see their dashboard names and stable IDs,
+`/knowledge reviews` to inspect durable retain candidates, and
+`/knowledge groups` to maintain one-request retain groups. `/knowledge flush`
+retries the local outbox. The model-facing operations are `knowledge_recall`,
+`knowledge_retain`, `knowledge_retain_document`, `knowledge_reflect`,
+`knowledge_curate`, and `knowledge_group`.
 
-Switching backends mid-session immediately replaces the live backend, memory tools, listeners, and system-prompt context. Existing users with `memories.enabled = true|false` are migrated to `memory.backend = "local"|"off"` exactly once on first launch; afterward, `memory.backend` is the sole runtime selector.
+Current Git, ZZWorkflow task, operation, and verification state never goes into
+Hindsight. ZZ stores only durable, future-useful knowledge backed by evidence,
+performs a scoped duplicate/conflict recall before retain, and keeps its local
+outbox and working-set cache under
+`~/.zz/agent/knowledge/boundary-<id>/knowledge.db`.
+
+See [ZZ Knowledge](../../docs/knowledge.md) for the complete operating model.

@@ -153,30 +153,28 @@ describe("expandSkillUrls", () => {
 });
 
 describe("expandInternalUrls", () => {
-	it("expands skill/agent/artifact/memory/rule URLs in one command", async () => {
+	it("expands skill, agent, artifact, and rule URLs in one command", async () => {
 		const skills = [createSkill("valid-skill", "/tmp/skills/valid-skill")];
 		const router = createInternalRouter({
 			"artifact://12": { sourcePath: "/tmp/artifacts/12.bash.log" },
 			"agent://reviewer_0": { sourcePath: "/tmp/session/reviewer_0.md" },
-			"memory://root/memory_summary.md": { sourcePath: "/tmp/memories/memory_summary.md" },
 			"rule://rs-no-unwrap": { sourcePath: "/tmp/rules/rs-no-unwrap.md" },
 		});
-		const command =
-			"cat agent://reviewer_0 artifact://12 memory://root/memory_summary.md rule://rs-no-unwrap skill://valid-skill/scripts/init.py";
+		const command = "cat agent://reviewer_0 artifact://12 rule://rs-no-unwrap skill://valid-skill/scripts/init.py";
 		const expectedSkillPath = path.join(skills[0].baseDir, "scripts/init.py");
 
 		await expect(expandInternalUrls(command, { skills, internalRouter: router })).resolves.toBe(
-			`cat ${shellEscape("/tmp/session/reviewer_0.md")} ${shellEscape("/tmp/artifacts/12.bash.log")} ${shellEscape("/tmp/memories/memory_summary.md")} ${shellEscape("/tmp/rules/rs-no-unwrap.md")} ${shellEscape(expectedSkillPath)}`,
+			`cat ${shellEscape("/tmp/session/reviewer_0.md")} ${shellEscape("/tmp/artifacts/12.bash.log")} ${shellEscape("/tmp/rules/rs-no-unwrap.md")} ${shellEscape(expectedSkillPath)}`,
 		);
 	});
 
-	it("passes caller cwd to the router when expanding memory URLs", async () => {
+	it("passes caller cwd to the router when expanding rule URLs", async () => {
 		const cwd = "/tmp/session-b";
-		const sourcePath = "/tmp/session-b-memory/memory_summary.md";
+		const sourcePath = "/tmp/session-b-rules/no-unwrap.md";
 		let observedCwd: string | undefined;
 		let observedPathOnly: boolean | undefined;
 		const router = {
-			canHandle: (input: string) => input === "memory://root/memory_summary.md",
+			canHandle: (input: string) => input === "rule://no-unwrap",
 			resolve: async (input: string, context?: ResolveContext) => {
 				observedCwd = context?.cwd;
 				observedPathOnly = context?.pathOnly;
@@ -191,7 +189,7 @@ describe("expandInternalUrls", () => {
 		};
 
 		await expect(
-			expandInternalUrls("cat memory://root/memory_summary.md", { skills: [], internalRouter: router, cwd }),
+			expandInternalUrls("cat rule://no-unwrap", { skills: [], internalRouter: router, cwd }),
 		).resolves.toBe(`cat ${shellEscape(sourcePath)}`);
 		expect(observedCwd).toBe(cwd);
 		expect(observedPathOnly).toBe(true);
@@ -277,16 +275,16 @@ describe("expandInternalUrls", () => {
 
 	it("leaves literal internal URLs embedded in quoted text unchanged", async () => {
 		const router = createInternalRouter({
-			"memory://root/summary.md": { sourcePath: "/tmp/memories/summary.md" },
+			"rule://summary": { sourcePath: "/tmp/rules/summary.md" },
 		});
-		const command = `printf '%s\\n' 'the literal memory://root/summary.md string'`;
+		const command = `printf '%s\\n' 'the literal rule://summary string'`;
 
 		await expect(expandInternalUrls(command, { skills: [], internalRouter: router })).resolves.toBe(command);
 	});
 
 	it("leaves unresolved quoted literal URLs unchanged", async () => {
 		const router = createInternalRouter({});
-		const command = "grep 'memory://xyz-quoted' file.txt";
+		const command = "grep 'artifact://xyz-quoted' file.txt";
 
 		await expect(expandInternalUrls(command, { skills: [], internalRouter: router })).resolves.toBe(command);
 	});
@@ -372,9 +370,9 @@ describe("expandInternalUrls", () => {
 
 	it("leaves internal URLs unchanged when the resolver fails", async () => {
 		const router = createInternalRouter({
-			"memory://root/missing.md": { error: "Memory file not found" },
+			"rule://missing": { error: "Rule file not found" },
 		});
-		const command = "cat memory://root/missing.md";
+		const command = "cat rule://missing";
 		await expect(expandInternalUrls(command, { skills: [], internalRouter: router })).resolves.toBe(command);
 	});
 

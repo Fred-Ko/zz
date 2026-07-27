@@ -104,7 +104,7 @@ If text was generated and not aborted:
 3. Start a brand-new session with `parentSession` pointing at the previous session file when one exists.
 4. Reset in-memory agent state (`agent.reset()`).
 5. Rebind `agent.sessionId` to the new session id.
-6. Rekey/reset Hindsight and Mnemopi memory session tracking for the new session.
+6. Rebuild the ZZ Knowledge session-orientation working set for the new session identity.
 7. Clear the queued next-turn context array (`#pendingNextTurnMessages`) and the scheduled hidden next-turn generation (`#scheduledHiddenNextTurnGeneration`). The agent's steering and follow-up queues are already cleared by `agent.reset()` in step 4.
 8. Reset todo reminder counter.
 

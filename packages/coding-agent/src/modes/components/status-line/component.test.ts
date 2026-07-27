@@ -1,6 +1,7 @@
-import { beforeAll, describe, expect, it } from "bun:test";
+import { afterEach, beforeAll, describe, expect, it, spyOn, vi } from "bun:test";
 import { Settings } from "../../../config/settings";
 import type { AgentSession } from "../../../session/agent-session";
+import * as git from "../../../utils/git";
 import { getThemeByName, setThemeInstance } from "../../theme/theme";
 import { StatusLineComponent } from "./component";
 
@@ -63,6 +64,10 @@ beforeAll(async () => {
 	setThemeInstance(loaded);
 });
 
+afterEach(() => {
+	vi.restoreAllMocks();
+});
+
 describe("StatusLineComponent", () => {
 	it("fingerprints tool-call arguments containing bigint values", () => {
 		const statusLine = new StatusLineComponent(
@@ -123,5 +128,64 @@ describe("StatusLineComponent", () => {
 		expect(rendered.some(row => row.includes("oh-my-pi"))).toBe(true);
 		expect(rendered.some(row => row.includes("128K"))).toBe(true);
 		expect(rows.length).toBeGreaterThanOrEqual(3);
+	});
+
+	it("shows the active linked worktree independently from its branch", () => {
+		spyOn(git.repo, "linkedWorktreeSync").mockReturnValue({
+			root: "/tmp/zz-worktrees/feature-knowledge",
+			primaryRoot: "/tmp/zz",
+		});
+
+		const statusLine = new StatusLineComponent(makeSessionWithLastMessage(null) as unknown as AgentSession);
+		statusLine.updateSettings({
+			preset: "custom",
+			layout: "detailed",
+			leftSegments: ["worktree"],
+			rightSegments: [],
+			separator: "none",
+			transparent: true,
+		});
+
+		const border = statusLine.getTopBorder(100);
+		const rendered = [border.content, ...(border.rows ?? []).map(row => row.content)]
+			.join("\n")
+			.replace(/\x1b\[[0-9;]*m/g, "");
+
+		expect(rendered).toContain("feature-knowledge");
+	});
+
+	it("keeps detailed status visible when a dialog replaces the editor", () => {
+		const model = {
+			provider: "openai-codex",
+			id: "gpt-5.6-sol",
+			name: "GPT-5.6 Sol",
+			contextWindow: 128000,
+		};
+		const statusLine = new StatusLineComponent(
+			makeSessionWithLastMessage(null, false, model) as unknown as AgentSession,
+		);
+		statusLine.updateSettings({
+			preset: "custom",
+			layout: "detailed",
+			leftSegments: ["path", "context_pct"],
+			rightSegments: ["model"],
+			separator: "none",
+			transparent: true,
+			segmentOptions: {
+				model: { showProvider: true },
+			},
+		});
+
+		expect(statusLine.render(100)).toEqual([]);
+
+		statusLine.setStandaloneMainStatus(true);
+		const rendered = statusLine.render(100).map(row => row.replace(/\x1b\[[0-9;]*m/g, ""));
+
+		expect(rendered.some(row => row.includes("openai-codex/gpt-5.6-sol"))).toBe(true);
+		expect(rendered.some(row => row.includes("oh-my-pi"))).toBe(true);
+		expect(rendered.length).toBeGreaterThanOrEqual(2);
+
+		statusLine.setStandaloneMainStatus(false);
+		expect(statusLine.render(100)).toEqual([]);
 	});
 });

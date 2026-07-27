@@ -60,7 +60,7 @@ export function createPersistedSubagentReviverFactory(
 			return undefined;
 		}
 		const init = peek.init;
-		// taskDepth drives real capability gating (task-spawn allowance, memory
+		// taskDepth drives real capability gating (task-spawn allowance,
 		// startup, …); derive it from the persisted parent chain rather than
 		// assuming a fixed level.
 		let taskDepth = 1;

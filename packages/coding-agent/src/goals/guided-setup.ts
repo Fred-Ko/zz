@@ -18,6 +18,22 @@ const RESPOND_TOOL: Tool = {
 		properties: {
 			kind: { type: "string", enum: ["question", "ready"] },
 			question: { type: "string" },
+			header: { type: "string" },
+			options: {
+				type: "array",
+				items: {
+					type: "object",
+					properties: {
+						label: { type: "string" },
+						description: { type: "string" },
+						preview: { type: "string" },
+					},
+					required: ["label"],
+					additionalProperties: false,
+				},
+			},
+			recommended: { type: "integer" },
+			multi: { type: "boolean" },
 			objective: { type: "string" },
 		},
 		required: ["kind"],
@@ -31,9 +47,28 @@ export interface GuidedGoalMessage {
 	content: string;
 }
 
-export type GuidedGoalTurnResult =
-	| { kind: "question"; question: string; objective?: string }
-	| { kind: "ready"; objective: string };
+export interface GuidedGoalOption {
+	label: string;
+	description?: string;
+	preview?: string;
+}
+
+export interface GuidedGoalQuestionResult {
+	kind: "question";
+	question: string;
+	header?: string;
+	options?: GuidedGoalOption[];
+	recommended?: number;
+	multi?: boolean;
+	objective?: string;
+}
+
+export interface GuidedGoalReadyResult {
+	kind: "ready";
+	objective: string;
+}
+
+export type GuidedGoalTurnResult = GuidedGoalQuestionResult | GuidedGoalReadyResult;
 
 export interface GuidedGoalTurnOptions {
 	messages: readonly GuidedGoalMessage[];
@@ -62,10 +97,45 @@ function parseGuidedGoalPayload(value: unknown): GuidedGoalTurnResult {
 	const payload = value as Record<string, unknown>;
 	if (payload.kind === "question" && typeof payload.question === "string" && payload.question.trim()) {
 		const question = payload.question.trim();
+		const header = typeof payload.header === "string" && payload.header.trim() ? payload.header.trim() : undefined;
+		const options = Array.isArray(payload.options)
+			? payload.options.flatMap((value): GuidedGoalOption[] => {
+					if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+					const option = value as Record<string, unknown>;
+					if (typeof option.label !== "string" || !option.label.trim()) return [];
+					return [
+						{
+							label: option.label.trim(),
+							...(typeof option.description === "string" && option.description.trim()
+								? { description: option.description.trim() }
+								: {}),
+							...(typeof option.preview === "string" && option.preview.trim()
+								? { preview: option.preview.trim() }
+								: {}),
+						},
+					];
+				})
+			: undefined;
+		const recommended =
+			typeof payload.recommended === "number" &&
+			Number.isInteger(payload.recommended) &&
+			options &&
+			payload.recommended >= 0 &&
+			payload.recommended < options.length
+				? payload.recommended
+				: undefined;
+		const result: GuidedGoalQuestionResult = {
+			kind: "question",
+			question,
+			...(header ? { header } : {}),
+			...(options && options.length > 0 ? { options } : {}),
+			...(recommended !== undefined ? { recommended } : {}),
+			...(typeof payload.multi === "boolean" ? { multi: payload.multi } : {}),
+		};
 		if (typeof payload.objective === "string" && payload.objective.trim()) {
-			return { kind: "question", question, objective: payload.objective.trim() };
+			result.objective = payload.objective.trim();
 		}
-		return { kind: "question", question };
+		return result;
 	}
 	if (payload.kind === "ready" && typeof payload.objective === "string" && payload.objective.trim()) {
 		return { kind: "ready", objective: payload.objective.trim() };

@@ -175,9 +175,11 @@ interface ActiveRepoCache {
 }
 
 interface WorktreeContext {
+	/** Whether this checkout is the repository's primary tree or a linked tree. */
+	kind: "primary" | "linked";
 	/** Primary-checkout (project) name shown by the path segment. */
 	projectName: string;
-	/** Worktree directory name — suppressed from the path when it equals the branch. */
+	/** Worktree directory name; the primary checkout uses its project directory name. */
 	worktreeName: string;
 }
 
@@ -188,11 +190,19 @@ interface WorktreeContext {
  */
 function resolveWorktreeContext(cwd: string): WorktreeContext | null {
 	const worktree = git.repo.linkedWorktreeSync(cwd);
-	if (!worktree) return null;
-	const base = path.basename(worktree.primaryRoot);
+	if (worktree) {
+		const base = path.basename(worktree.primaryRoot);
+		const projectName = base.endsWith(".git") ? base.slice(0, -4) : base;
+		if (!projectName) return null;
+		return { kind: "linked", projectName, worktreeName: path.basename(worktree.root) };
+	}
+
+	const repository = git.repo.resolveSync(cwd);
+	if (!repository) return null;
+	const base = path.basename(repository.repoRoot);
 	const projectName = base.endsWith(".git") ? base.slice(0, -4) : base;
 	if (!projectName) return null;
-	return { projectName, worktreeName: path.basename(worktree.root) };
+	return { kind: "primary", projectName, worktreeName: projectName };
 }
 
 /**
@@ -236,8 +246,12 @@ function hasPathSegment(segments: readonly StatusLineSegmentId[]): boolean {
 	return segments.includes("path");
 }
 
+function hasWorktreeSegment(segments: readonly StatusLineSegmentId[]): boolean {
+	return segments.includes("worktree");
+}
+
 function hasGitBackedSegment(segments: readonly StatusLineSegmentId[]): boolean {
-	return hasGitSegment(segments) || hasPrSegment(segments);
+	return hasGitSegment(segments) || hasPrSegment(segments) || hasWorktreeSegment(segments);
 }
 
 /**
@@ -247,7 +261,7 @@ function hasGitBackedSegment(segments: readonly StatusLineSegmentId[]): boolean 
  */
 const DETAILED_STATUS_ROWS: readonly (readonly StatusLineSegmentId[])[] = [
 	["pi", "model", "mode", "collab", "session_name", "hostname"],
-	["path", "git", "pr", "session", "subagents"],
+	["path", "worktree", "git", "pr", "session", "subagents"],
 	["context_pct", "context_total", "token_in", "token_out", "token_total", "token_rate"],
 	["cache_read", "cache_write", "cache_hit", "cost", "usage", "time_spent", "time"],
 ];
@@ -291,6 +305,7 @@ export class StatusLineComponent implements Component {
 	#loopModeStatus: SegmentContext["loopMode"] = null;
 	#goalModeStatus: { enabled: boolean; paused: boolean } | null = null;
 	#vibeModeStatus: { enabled: boolean } | null = null;
+	#standaloneMainStatus = false;
 	/**
 	 * Injected aggregator that returns the aggregate tok/s of this session's
 	 * live vibe worker sessions, or null when no workers are streaming. Kept as
@@ -383,7 +398,7 @@ export class StatusLineComponent implements Component {
 		const effectiveGitCwd = activeRepo?.repoRoot ?? projectDir;
 		// Only collapse the bare-cwd case: a single-direct-child-repo context
 		// (activeRepo set) renders `<parent> ↳ <child>`, which we leave intact.
-		const worktree = activeRepo ? null : resolveWorktreeContext(effectiveGitCwd);
+		const worktree = resolveWorktreeContext(effectiveGitCwd);
 		this.#activeRepoCache = { projectDir, activeRepo, effectiveGitCwd, worktree };
 		return this.#activeRepoCache;
 	}
@@ -1173,6 +1188,7 @@ export class StatusLineComponent implements Component {
 		width: number,
 		segmentOptions: StatusLineSettings["segmentOptions"],
 		includePath: boolean,
+		includeWorktree: boolean,
 		includeContext: boolean,
 		includeGit: boolean,
 		includePr: boolean,
@@ -1219,7 +1235,7 @@ export class StatusLineComponent implements Component {
 			contextPercent = collabState.contextUsage.percent ?? contextPercent;
 		}
 
-		const shouldResolveActiveRepo = this.#gitEnabled() && (includePath || includeGit || includePr);
+		const shouldResolveActiveRepo = this.#gitEnabled() && (includePath || includeWorktree || includeGit || includePr);
 		const projectDir = getProjectDir();
 		const activeRepoCache = shouldResolveActiveRepo
 			? this.#resolveActiveRepoCache()
@@ -1323,6 +1339,8 @@ export class StatusLineComponent implements Component {
 		const effectiveSettings = this.#resolveSettings();
 		const includePath =
 			hasPathSegment(effectiveSettings.leftSegments) || hasPathSegment(effectiveSettings.rightSegments);
+		const includeWorktree =
+			hasWorktreeSegment(effectiveSettings.leftSegments) || hasWorktreeSegment(effectiveSettings.rightSegments);
 		const includeContext =
 			hasContextSegment(effectiveSettings.leftSegments) || hasContextSegment(effectiveSettings.rightSegments);
 		const gitEnabled = this.#gitEnabled();
@@ -1335,6 +1353,7 @@ export class StatusLineComponent implements Component {
 			width,
 			effectiveSettings.segmentOptions,
 			includePath,
+			includeWorktree,
 			includeContext,
 			includeGit,
 			includePr,
@@ -1573,15 +1592,28 @@ export class StatusLineComponent implements Component {
 		return result;
 	}
 
+	/**
+	 * Render the main model/workspace status as ordinary rows while a dialog
+	 * temporarily replaces the editor that normally owns these rows.
+	 */
+	setStandaloneMainStatus(enabled: boolean): void {
+		this.#standaloneMainStatus = enabled;
+	}
+
 	render(width: number): readonly string[] {
-		// Only render hook statuses - main status is in editor's top border
 		const showHooks = this.#settings.showHookStatus ?? true;
-		if (!showHooks || this.#hookStatuses.size === 0) {
-			return [];
+		const hookRows =
+			showHooks && this.#hookStatuses.size > 0
+				? Array.from(this.#hookStatuses.entries())
+						.sort(([a], [b]) => a.localeCompare(b))
+						.map(([, text]) => truncateToWidth(sanitizeStatusText(text), width))
+				: [];
+		if (!this.#standaloneMainStatus) {
+			return hookRows;
 		}
 
-		return Array.from(this.#hookStatuses.entries())
-			.sort(([a], [b]) => a.localeCompare(b))
-			.map(([, text]) => truncateToWidth(sanitizeStatusText(text), width));
+		const main = this.getTopBorder(width);
+		const mainRows = [main.content, ...(main.rows?.map(row => row.content) ?? [])].filter(Boolean);
+		return [...hookRows, ...mainRows];
 	}
 }

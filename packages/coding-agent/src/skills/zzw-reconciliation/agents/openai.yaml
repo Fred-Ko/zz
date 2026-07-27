@@ -1,0 +1,4 @@
+interface:
+  display_name: "ZZW Reconciliation"
+  short_description: "Classify execution mismatches before retrying"
+  default_prompt: "Use $zzw-reconciliation to classify and reconcile the active ZZWorkflow mismatch."

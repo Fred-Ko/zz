@@ -82,9 +82,6 @@ const codingAgentBucketPlans: Record<CodingAgentBucket, { label: string; paralle
 // Smaller workspace packages stay separate from native/TUI/integration suites so
 // their short TS suites can run together. CI still downloads the Linux x64 native
 // addon before this bucket: shared utility barrels may load native-backed modules.
-// mnemopi is intentionally excluded — its embedding suites depend on a ~270MB
-// fastembed model absent from CI runners, so they flake/time out under the parallel
-// bucket; run `bun --cwd=packages/mnemopi test` locally instead.
 const fastWorkspacePackages = [
 	"packages/hashline",
 	"packages/wire",
@@ -106,10 +103,8 @@ const nativeAndIntegrationPackages = [
 ];
 
 // Packages the CI buckets deliberately skip but a local full run should still
-// cover. mnemopi's embedding suites need a ~270MB fastembed model absent from CI
-// runners (so it flakes/times out there); robomp-web lives under python/robomp
-// and is outside every CI TS bucket.
-const localOnlyWorkspacePackages = ["packages/mnemopi", "python/robomp/web"];
+// cover. robomp-web lives under python/robomp and is outside every CI TS bucket.
+const localOnlyWorkspacePackages = ["python/robomp/web"];
 
 // Repo-level script tests. CI's `workspace` bucket only runs the merge gates:
 // the concurrency regression (the GHA-config guard) and the .d.ts extension
@@ -127,7 +122,7 @@ const repoScriptTests = [
 ];
 
 const codingAgentNativePathPatterns = [
-	/(^|\/)[^/]*(bash|native|browser|cmux|mnemopi|hindsight|memory)[^/]*\.test\.ts$/i,
+	/(^|\/)[^/]*(bash|native|browser|cmux|knowledge)[^/]*\.test\.ts$/i,
 	/^test\/[^/]*(ask|gh|irc|task|eval|search|read|write|edit|ast|resolve|sqlite|web-search|fetch|image|ssh|tool)[^/]*\.test\.ts$/,
 	/^test\/core\/python-[^/]*\.test\.ts$/,
 	/^test\/core\/[^/]*executor[^/]*\.test\.ts$/,
@@ -155,7 +150,7 @@ const codingAgentRuntimePathPatterns = [
 	/^test\/(session|session-manager|task|collab|internal-urls)\//,
 	/^test\/session[^/]*\.test\.ts$/,
 	/^test\/session-manager[^/]*\.test\.ts$/,
-	/^test\/(extensions?|plugin|autolearn|skills|marketplace|oauth)[^/]*\.test\.ts$/,
+	/^test\/(extensions?|plugin|managed-skills|skills|marketplace|oauth)[^/]*\.test\.ts$/,
 	/^test\/[^/]*oauth[^/]*\.test\.ts$/,
 	/^test\/(extensibility|discovery|tool-discovery|goals|marketplace)\//,
 	/^test\/(model|model-|model-registry|model-resolver|compaction)[^/]*\.test\.ts$/,
@@ -386,7 +381,7 @@ async function commandsForMode(mode: Mode): Promise<TestCommand[]> {
 			];
 		// `local-ts` is the full local TypeScript run that root `bun run test:ts`
 		// drives: every package the old `--workspaces` fan-out covered (the CI
-		// `all` set PLUS mnemopi and robomp-web, which CI omits) and every repo
+		// `all` set PLUS robomp-web, which CI omits) and every repo
 		// script test, routed through this one quiet runner so the whole suite
 		// shares one progress stream and one failure report.
 		case "local-ts":

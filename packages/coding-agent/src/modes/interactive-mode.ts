@@ -69,6 +69,7 @@ import { clearClaudePluginRootsCache } from "../discovery/helpers";
 import type {
 	AutocompleteProviderFactory,
 	ContextUsage,
+	ExtensionAskDialogQuestion,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionUISelectItem,
@@ -78,8 +79,20 @@ import type {
 import type { CompactOptions } from "../extensibility/extensions/types";
 import type { Skill } from "../extensibility/skills";
 import { loadSlashCommands } from "../extensibility/slash-commands";
-import { type GuidedGoalMessage, newGuidedGoalSessionId, runGuidedGoalTurn } from "../goals/guided-setup";
-import type { Goal, GoalModeState } from "../goals/state";
+import {
+	type GuidedGoalMessage,
+	type GuidedGoalQuestionResult,
+	type GuidedGoalTurnResult,
+	newGuidedGoalSessionId,
+	runGuidedGoalTurn,
+} from "../goals/guided-setup";
+import {
+	type Goal,
+	type GoalController,
+	type GoalModeState,
+	isZZWorkflowGoalState,
+	resolveGoalController,
+} from "../goals/state";
 import { resolveLocalUrlToPath } from "../internal-urls";
 import { LSP_STARTUP_EVENT_CHANNEL, type LspStartupEvent } from "../lsp/startup-events";
 import type { MCPManager } from "../mcp";
@@ -96,12 +109,7 @@ import planModeCompactInstructionsPrompt from "../prompts/system/plan-mode-compa
 	type: "text",
 };
 import { type AgentRegistry, MAIN_AGENT_ID } from "../registry/agent-registry";
-import {
-	type AgentSession,
-	type AgentSessionEvent,
-	type ResolvedRoleModel,
-	SHUTDOWN_CONSOLIDATE_BUDGET_MS,
-} from "../session/agent-session";
+import type { AgentSession, AgentSessionEvent, ResolvedRoleModel } from "../session/agent-session";
 import type { CompactMode } from "../session/compact-modes";
 import { HistoryStorage } from "../session/history-storage";
 import type { SessionContext } from "../session/session-context";
@@ -116,6 +124,7 @@ import { formatTaskId } from "../task/render";
 import type { ConfiguredThinkingLevel } from "../thinking";
 import { tinyTitleClient } from "../tiny/title-client";
 import type { LspStartupServerInfo } from "../tools";
+import { ZZWORKFLOW_TOOL_NAMES } from "../tools/builtin-names";
 import { normalizeLocalScheme } from "../tools/path-utils";
 import { replaceTabs, TRUNCATE_LENGTHS, truncateToWidth } from "../tools/render-utils";
 import {
@@ -158,6 +167,7 @@ import { type PlanReviewAnnotationState, PlanReviewOverlay } from "./components/
 import { StatusLineComponent } from "./components/status-line";
 import type { ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
+import { UserMessageComponent } from "./components/user-message";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
 import { CommandController } from "./controllers/command-controller";
@@ -213,9 +223,19 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
+import { createAssistantMessageComponent } from "./utils/interactive-context-helpers";
 import { UiHelpers } from "./utils/ui-helpers";
 
 const STILL_CLOSING_DELAY_MS = 3_000;
+
+const GUIDED_GOAL_MESSAGE_USAGE: AssistantMessage["usage"] = {
+	input: 0,
+	output: 0,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 0,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
 
 const HINT_SHIMMER_PALETTE: ShimmerPalette = {
 	low: "dim",
@@ -319,6 +339,15 @@ function formatHudNoteMarker(count: number): string {
 type GoalSubcommand = "set" | "show" | "pause" | "resume" | "drop" | "budget";
 
 const GOAL_SUBCOMMANDS = new Set<GoalSubcommand>(["set", "show", "pause", "resume", "drop", "budget"]);
+const ZZW_CONTINUATION_BLOCKED_PHASES = new Set([
+	"AWAITING_USER",
+	"PAUSING",
+	"SUSPENDED",
+	"INTERRUPTED",
+	"COMPLETED",
+	"ABANDONED",
+	"FAILED",
+]);
 const PLAN_KEEP_CONTEXT_OPTION_INDEX = 2;
 const PLAN_KEEP_CONTEXT_DISABLE_THRESHOLD_PERCENT = 95;
 
@@ -521,6 +550,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#pendingSubmittedInput: SubmittedUserInput | undefined;
 	#pendingSubmissionDispose: (() => void) | undefined;
 	#optimisticUserMessageComponents: Component[] = [];
+	#guidedGoalInput: { resolve: (value: string | undefined) => void } | undefined;
 	lastSigintTime = 0;
 	lastEscapeTime = 0;
 	lastLeftTapTime = 0;
@@ -563,6 +593,7 @@ export class InteractiveMode implements InteractiveModeContext {
 	#goalTurnHadToolCalls = false;
 	#goalContinuationTurnInFlight = false;
 	#goalSuppressNextContinuation = false;
+	#explicitGoalContinuationPending = false;
 	#planModePreviousModelState: { model: Model; thinkingLevel?: ConfiguredThinkingLevel } | undefined;
 	#pendingModelSwitch: { model: Model; thinkingLevel?: ConfiguredThinkingLevel } | undefined;
 	/** Whether #pendingModelSwitch was queued by the live plan-role reconciler. */
@@ -799,6 +830,18 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#focusController = new SessionFocusController(this);
 		this.#inputController = new InputController(this);
 		this.#observerRegistry = new SessionObserverRegistry();
+		// Goal/ZZWorkflow commands can mutate their runtime before the rest of the
+		// interactive startup finishes (and tests/embedders intentionally exercise
+		// that public command surface without calling init()). Subscribe as soon as
+		// every UI dependency used by the handler exists so an approval transition
+		// cannot be lost between command handling and the main input waiter.
+		if (typeof this.session.subscribe === "function") {
+			this.#eventBusUnsubscribers.push(
+				this.session.subscribe(event => {
+					void this.#handleGoalSessionEvent(event);
+				}),
+			);
+		}
 	}
 
 	#handleMcpConnectionStatusEvent(event: McpConnectionStatusEvent): void {
@@ -875,8 +918,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			getDraftText: () => this.editor.getText(),
 			beginDispose: () => this.session.beginDispose(),
 			saveDraft: text => this.sessionManager.saveDraft(text),
-			disposeSession: reason =>
-				this.session.dispose({ mnemopiConsolidateTimeoutMs: SHUTDOWN_CONSOLIDATE_BUDGET_MS, reason }),
+			disposeSession: reason => this.session.dispose({ reason }),
 		});
 		// Forward the postmortem reason (SIGTERM/SIGHUP/uncaughtException/…) so the
 		// persisted `session_exit` diagnostic carries the real trigger. Postmortem
@@ -1074,9 +1116,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#subscribeToAgent();
 
 		this.#eventBusUnsubscribers.push(
-			this.session.subscribe(event => {
-				void this.#handleGoalSessionEvent(event);
-			}),
 			onStatusLineSessionAccentChanged(() => {
 				this.#syncStatusLineSettings();
 				this.#handleSessionAccentInputsChanged();
@@ -1278,7 +1317,9 @@ export class InteractiveMode implements InteractiveModeContext {
 			resolve(input);
 		};
 		this.#scheduleLoopAutoSubmit();
-		this.#scheduleGoalContinuation();
+		if (!this.#dispatchExplicitGoalContinuation()) {
+			this.#scheduleGoalContinuation();
+		}
 
 		using _ = new EventLoopKeepalive();
 		return await promise;
@@ -1323,6 +1364,12 @@ export class InteractiveMode implements InteractiveModeContext {
 		if ((this.editor.pendingImages?.length ?? 0) > 0) return;
 		const state = this.session.getGoalModeState();
 		if (!state?.enabled || state.goal.status !== "active") return;
+		if (
+			isZZWorkflowGoalState(state) &&
+			ZZW_CONTINUATION_BLOCKED_PHASES.has(this.session.taskLifecycle.state?.phase ?? "AWAITING_USER")
+		) {
+			return;
+		}
 		const prompt = this.session.goalRuntime.buildContinuationPrompt();
 		if (!prompt) return;
 		this.#goalContinuationTimer = setTimeout(() => {
@@ -1342,6 +1389,12 @@ export class InteractiveMode implements InteractiveModeContext {
 			if ((this.editor.pendingImages?.length ?? 0) > 0) return;
 			const latestState = this.session.getGoalModeState();
 			if (!latestState?.enabled || latestState.goal.status !== "active") return;
+			if (
+				isZZWorkflowGoalState(latestState) &&
+				ZZW_CONTINUATION_BLOCKED_PHASES.has(this.session.taskLifecycle.state?.phase ?? "AWAITING_USER")
+			) {
+				return;
+			}
 			this.#goalContinuationTurnInFlight = true;
 			this.onInputCallback(
 				this.startPendingSubmission({
@@ -1791,7 +1844,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		// actually render. Message objects stay strongly reachable through
 		// session entries for the whole session, so entries for compacted-away
 		// history would otherwise pin their components' rendered layout caches
-		// forever — exactly the memory a collapsed compaction used to release.
+		// forever — exactly the allocation a collapsed compaction used to release.
 		const retained = new WeakMap<AgentMessage, Component>();
 		for (const message of context.messages) {
 			const component = this.transcriptMessageComponents.get(message);
@@ -2198,6 +2251,46 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#goalSuppressNextContinuation = false;
 	}
 
+	#dispatchExplicitGoalContinuation(): boolean {
+		if (!this.#explicitGoalContinuationPending || !this.onInputCallback) return false;
+		if (this.#isAutoSubmitBlocked() || this.#pendingSubmittedInput) return false;
+		const state = this.session.getGoalModeState();
+		if (!isZZWorkflowGoalState(state) || !state.enabled || state.goal.status !== "active") return false;
+		if (ZZW_CONTINUATION_BLOCKED_PHASES.has(this.session.taskLifecycle.state?.phase ?? "AWAITING_USER")) {
+			return false;
+		}
+		const prompt = this.session.goalRuntime.buildContinuationPrompt();
+		if (!prompt) return false;
+
+		this.#explicitGoalContinuationPending = false;
+		this.#cancelGoalContinuation();
+		this.#goalContinuationTurnInFlight = true;
+		this.onInputCallback(
+			this.startPendingSubmission({
+				text: prompt,
+				customType: "goal-continuation",
+				display: false,
+			}),
+		);
+		return true;
+	}
+
+	async requestGoalContinuation(): Promise<void> {
+		// Approval is an explicit request to execute, so it must not depend on the
+		// optional 800ms auto-continuation policy. A resumed session deliberately
+		// restores goals as paused; approving its plan also resumes that controlled
+		// goal before handing the next turn to the normal main-loop submit path.
+		this.editor.setText("");
+		const state = this.session.getGoalModeState();
+		if (isZZWorkflowGoalState(state) && !state.enabled && state.goal.status === "paused") {
+			await this.#enterGoalMode({ resume: true, silent: true });
+		}
+		this.#resetGoalContinuationSuppression();
+		if (this.#explicitGoalContinuationPending || this.#goalContinuationTurnInFlight) return;
+		this.#explicitGoalContinuationPending = true;
+		this.#dispatchExplicitGoalContinuation();
+	}
+
 	#getPausedGoalState(): GoalModeState | undefined {
 		const state = this.session.getGoalModeState();
 		if (!state?.goal || state.enabled || state.goal.status !== "paused") {
@@ -2250,6 +2343,15 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#resetGoalContinuationSuppression();
 			return;
 		}
+		if (event.type === "zzworkflow_updated") {
+			this.statusLine.invalidate();
+			this.#resetGoalContinuationSuppression();
+			if (!this.#dispatchExplicitGoalContinuation()) {
+				this.#scheduleGoalContinuation();
+			}
+			this.ui.requestRender();
+			return;
+		}
 		if (event.type === "goal_updated") {
 			// Handle drop before clearing goalModeEnabled so #exitGoalMode can
 			// still restore the previous tool set while the flag is true.
@@ -2261,6 +2363,9 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.goalModePaused = event.state?.enabled !== true && event.state?.goal?.status === "paused";
 			if (!event.state?.enabled) {
 				this.#cancelGoalContinuation();
+				if (event.state?.goal?.status !== "paused") {
+					this.#explicitGoalContinuationPending = false;
+				}
 			}
 			this.#updateGoalModeStatus();
 			return;
@@ -2276,7 +2381,9 @@ export class InteractiveMode implements InteractiveModeContext {
 			await this.#exitGoalMode({ reason: "completed", silent: true });
 			return;
 		}
-		this.#scheduleGoalContinuation();
+		if (!this.#dispatchExplicitGoalContinuation()) {
+			this.#scheduleGoalContinuation();
+		}
 	}
 
 	async #applyPlanModeModel(): Promise<void> {
@@ -2403,6 +2510,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.#goalTurnHadToolCalls = false;
 			this.#goalContinuationTurnInFlight = false;
 			this.#goalSuppressNextContinuation = false;
+			this.#explicitGoalContinuationPending = false;
 			this.#cancelGoalContinuation();
 			this.#updateGoalModeStatus();
 		}
@@ -2456,6 +2564,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.session.setGoalModeState({
 				enabled: sessionContext.mode === "goal",
 				mode: "active",
+				controller: sessionContext.modeData?.controller === "zzworkflow" ? "zzworkflow" : "goal",
 				goal,
 			});
 			const restored = await this.session.goalRuntime.onThreadResumed({
@@ -2466,9 +2575,12 @@ export class InteractiveMode implements InteractiveModeContext {
 			// sdk.ts excludes "goal" from the initial active tool set unconditionally.
 			// Re-add it now so the agent can call resume, complete, or drop on this goal.
 			if (restored?.goal) {
-				const previousTools = this.session.getEnabledToolNames().filter(name => name !== "goal");
+				const previousTools = this.session
+					.getEnabledToolNames()
+					.filter(name => name !== "goal" && !name.startsWith("zzw_"));
 				this.#goalModePreviousTools = previousTools;
-				await this.session.setActiveToolsByName([...new Set([...previousTools, "goal"])]);
+				const controllerTools = isZZWorkflowGoalState(restored) ? ZZWORKFLOW_TOOL_NAMES : [];
+				await this.session.setActiveToolsByName([...new Set([...previousTools, "goal", ...controllerTools])]);
 			}
 			this.#updateGoalModeStatus();
 			return;
@@ -2670,7 +2782,12 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 	}
 
-	async #enterGoalMode(options: { objective?: string; resume?: boolean; silent?: boolean }): Promise<void> {
+	async #enterGoalMode(options: {
+		objective?: string;
+		resume?: boolean;
+		silent?: boolean;
+		controller?: GoalController;
+	}): Promise<void> {
 		if (this.goalModeEnabled) {
 			return;
 		}
@@ -2682,13 +2799,22 @@ export class InteractiveMode implements InteractiveModeContext {
 			this.showWarning("Exit vibe mode first.");
 			return;
 		}
-		const previousTools = this.session.getEnabledToolNames().filter(name => name !== "goal");
-		const goalTools = [...new Set([...previousTools, "goal"])];
+		const previousTools = this.session
+			.getEnabledToolNames()
+			.filter(name => name !== "goal" && !name.startsWith("zzw_"));
+		const controller = options.resume
+			? resolveGoalController(this.session.getGoalModeState())
+			: (options.controller ?? "goal");
+		const controllerTools = controller === "zzworkflow" ? ZZWORKFLOW_TOOL_NAMES : [];
+		const goalTools = [...new Set([...previousTools, "goal", ...controllerTools])];
 		this.#goalModePreviousTools = previousTools;
 		this.goalModePaused = false;
 		const state = options.resume
 			? await this.session.goalRuntime.resumeGoal()
-			: await this.session.goalRuntime.createGoal({ objective: options.objective ?? "" });
+			: await this.session.goalRuntime.createGoal({
+					objective: options.objective ?? "",
+					controller,
+				});
 		await this.session.setActiveToolsByName(goalTools);
 		this.session.setGoalModeState(state);
 		this.goalModeEnabled = true;
@@ -2726,6 +2852,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.goalModePaused = options?.paused ?? false;
 		this.#goalModePreviousTools = undefined;
 		this.#goalContinuationTurnInFlight = false;
+		if (!options?.paused) {
+			this.#explicitGoalContinuationPending = false;
+		}
 		this.#cancelGoalContinuation();
 		this.#updateGoalModeStatus();
 		if (!options?.silent) {
@@ -3367,6 +3496,14 @@ export class InteractiveMode implements InteractiveModeContext {
 	}
 
 	async handleGoalModeCommand(rest?: string): Promise<void> {
+		await this.#handleGoalModeCommand("goal", rest);
+	}
+
+	async handleZZWorkflowGoalCommand(rest?: string): Promise<void> {
+		await this.#handleGoalModeCommand("zzworkflow", rest);
+	}
+
+	async #handleGoalModeCommand(controller: GoalController, rest?: string): Promise<void> {
 		try {
 			if (this.planModeEnabled || this.planModePaused) {
 				this.showWarning("Exit plan mode first.");
@@ -3380,14 +3517,27 @@ export class InteractiveMode implements InteractiveModeContext {
 				this.showWarning("Goal mode is disabled. Enable it in settings (goal.enabled).");
 				return;
 			}
+			const currentState = this.session.getGoalModeState();
+			if (currentState?.goal && resolveGoalController(currentState) !== controller) {
+				this.showWarning(
+					controller === "zzworkflow"
+						? "원본 Goal이 활성화되어 있습니다. 먼저 /goal drop으로 종료하세요."
+						: "ZZWorkflow가 활성화되어 있습니다. 먼저 /zzw-goal drop으로 종료하세요.",
+				);
+				return;
+			}
 			const { sub, rest: subRest } = parseGoalSubcommand(rest ?? "");
 			if (sub) {
-				await this.#dispatchGoalSubcommand(sub, subRest);
+				await this.#dispatchGoalSubcommand(sub, subRest, controller);
 				return;
 			}
 			if (this.goalModeEnabled) {
 				if (subRest) {
-					this.showStatus("Goal mode is already active. Use /goal to manage it, or /goal drop to start over.");
+					this.showStatus(
+						controller === "zzworkflow"
+							? "ZZWorkflow가 이미 활성화되어 있습니다. /zzw-goal로 관리하거나 /zzw-goal drop으로 종료하세요."
+							: "Goal mode is already active. Use /goal to manage it, or /goal drop to start over.",
+					);
 					return;
 				}
 				await this.#openGoalMenu("active");
@@ -3403,41 +3553,224 @@ export class InteractiveMode implements InteractiveModeContext {
 				return;
 			}
 			if (subRest) {
-				await this.#startGoalFromObjective(subRest);
+				await this.#startGoalFromObjective(subRest, controller);
 				return;
 			}
 			const objective = (
 				await this.showHookEditor("Goal objective", undefined, undefined, { promptStyle: true })
 			)?.trim();
 			if (!objective) return;
-			await this.#startGoalFromObjective(objective);
+			await this.#startGoalFromObjective(objective, controller);
 		} catch (error) {
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
+
+	#presentGuidedGoalAssistantMessage(text: string): void {
+		const component = createAssistantMessageComponent(this);
+		const model = this.session.model;
+		const message: AssistantMessage = {
+			role: "assistant",
+			content: [{ type: "text", text }],
+			api: model?.api ?? "openai-codex-responses",
+			provider: model?.provider ?? "openai-codex",
+			model: model?.id ?? "guided-goal",
+			usage: { ...GUIDED_GOAL_MESSAGE_USAGE },
+			stopReason: "stop",
+			timestamp: Date.now(),
+		};
+		component.updateContent(message);
+		component.markTranscriptBlockFinalized();
+		this.present(component);
+	}
+
+	#presentGuidedGoalUserMessage(text: string): void {
+		this.present(new UserMessageComponent(text));
+	}
+
+	#guidedGoalAnswerText(
+		result: GuidedGoalQuestionResult,
+		selectedOptions: readonly string[],
+		customInput: string | undefined,
+		note: string | undefined,
+	): { model: string; display: string } | undefined {
+		const normalizedCustom = customInput?.trim();
+		const normalizedNote = note?.trim();
+		if (normalizedCustom) {
+			return {
+				model: normalizedNote ? `${normalizedCustom}\n\n${normalizedNote}` : normalizedCustom,
+				display: normalizedNote ? `${normalizedCustom}\n\n추가 메모: ${normalizedNote}` : normalizedCustom,
+			};
+		}
+		if (selectedOptions.length === 0) return undefined;
+		const model = selectedOptions
+			.map(label => {
+				const description = result.options?.find(option => option.label === label)?.description;
+				return description ? `${label} — ${description}` : label;
+			})
+			.join("\n");
+		const display = selectedOptions
+			.map(label => {
+				const description = result.options?.find(option => option.label === label)?.description;
+				return description ? `**${label}**\n${description}` : `**${label}**`;
+			})
+			.join("\n\n");
+		return {
+			model: normalizedNote ? `${model}\n\n${normalizedNote}` : model,
+			display: normalizedNote ? `${display}\n\n추가 메모: ${normalizedNote}` : display,
+		};
+	}
+
+	async #requestGuidedGoalAnswer(result: GuidedGoalQuestionResult, turn: number): Promise<string | undefined> {
+		const askDialog = this.getToolUIContext()?.askDialog;
+		if (!askDialog || !result.options?.length) {
+			this.#presentGuidedGoalAssistantMessage(result.question);
+			const answer = (await this.#requestGuidedGoalInput("목표 인터뷰 · 답변을 입력하고 Enter를 누르세요"))?.trim();
+			if (!answer) return undefined;
+			this.#presentGuidedGoalUserMessage(answer);
+			return answer;
+		}
+
+		const headerParts = [`${turn + 1}/6`];
+		if (result.header?.trim()) headerParts.push(result.header.trim());
+		const question: ExtensionAskDialogQuestion = {
+			id: `guided-goal-${turn + 1}`,
+			question: result.question,
+			header: headerParts.join(" · "),
+			options: result.options,
+			...(result.recommended !== undefined ? { recommended: result.recommended } : {}),
+			...(result.multi !== undefined ? { multi: result.multi } : {}),
+		};
+		this.setHookStatus("guided-goal", "목표 인터뷰 · 선택지를 고르거나 직접 입력하세요");
+		try {
+			const dialogResult = await askDialog([question]);
+			if (!dialogResult) return undefined;
+			if (dialogResult.kind === "chat") {
+				this.#presentGuidedGoalAssistantMessage(result.question);
+				const answer = (
+					await this.#requestGuidedGoalInput("목표 인터뷰 · 질문에 대해 자유롭게 답변하고 Enter를 누르세요")
+				)?.trim();
+				if (!answer) return undefined;
+				this.#presentGuidedGoalUserMessage(answer);
+				return answer;
+			}
+			const answerResult = dialogResult.results[0];
+			if (!answerResult) return undefined;
+			const answer = this.#guidedGoalAnswerText(
+				result,
+				answerResult.selectedOptions,
+				answerResult.customInput,
+				answerResult.note,
+			);
+			if (!answer) return undefined;
+			this.#presentGuidedGoalAssistantMessage(result.question);
+			this.#presentGuidedGoalUserMessage(answer.display);
+			return answer.model;
+		} finally {
+			this.setHookStatus("guided-goal", undefined);
+		}
+	}
+
+	async #requestGuidedGoalInput(status: string, prefill?: string): Promise<string | undefined> {
+		if (this.#guidedGoalInput) {
+			throw new Error("이미 목표 인터뷰 답변을 기다리고 있습니다.");
+		}
+		this.editor.clearDraft();
+		if (prefill) this.editor.setText(prefill);
+		this.setHookStatus("guided-goal", status);
+		this.ui.setFocus(this.editor);
+		this.ui.requestRender();
+
+		const { promise, resolve } = Promise.withResolvers<string | undefined>();
+		this.#guidedGoalInput = { resolve };
+		return promise;
+	}
+
+	submitGuidedGoalInput(text: string): boolean {
+		const pending = this.#guidedGoalInput;
+		if (!pending) return false;
+		this.#guidedGoalInput = undefined;
+		this.editor.clearDraft();
+		this.setHookStatus("guided-goal", undefined);
+		pending.resolve(text);
+		this.ui.requestRender();
+		return true;
+	}
+
+	cancelGuidedGoalInput(): boolean {
+		const pending = this.#guidedGoalInput;
+		if (!pending) return false;
+		this.#guidedGoalInput = undefined;
+		this.editor.clearDraft();
+		this.setHookStatus("guided-goal", undefined);
+		pending.resolve(undefined);
+		this.ui.requestRender();
+		return true;
+	}
+
+	async #runGuidedGoalInterviewTurn(
+		messages: readonly GuidedGoalMessage[],
+		sideSessionId: string,
+	): Promise<GuidedGoalTurnResult> {
+		this.editor.disableSubmit = true;
+		this.setWorkingMessage("목표 인터뷰 응답을 생성하는 중…");
+		this.ensureLoadingAnimation();
+		this.ui.requestRender();
+		try {
+			return await runGuidedGoalTurn(this.session, { messages, sideSessionId });
+		} finally {
+			this.editor.disableSubmit = false;
+			this.#stopLoadingAnimation(true);
+			this.ui.requestRender();
+		}
+	}
+
 	async handleGuidedGoalCommand(rest?: string): Promise<void> {
+		await this.#handleGuidedGoalCommand("goal", rest);
+	}
+
+	async handleZZWorkflowGuidedGoalCommand(rest?: string): Promise<void> {
+		await this.#handleGuidedGoalCommand("zzworkflow", rest);
+	}
+
+	async #handleGuidedGoalCommand(controller: GoalController, rest?: string): Promise<void> {
 		try {
 			if (this.planModeEnabled || this.planModePaused) {
-				this.showWarning("Exit plan mode first.");
+				this.showWarning("먼저 계획 모드를 종료하세요.");
 				return;
 			}
 			if (!this.session.settings.get("goal.enabled")) {
-				this.showWarning("Goal mode is disabled. Enable it in settings (goal.enabled).");
+				this.showWarning("목표 모드가 비활성화되어 있습니다. 설정에서 goal.enabled를 켜세요.");
+				return;
+			}
+			const currentState = this.session.getGoalModeState();
+			if (currentState?.goal && resolveGoalController(currentState) !== controller) {
+				this.showWarning(
+					controller === "zzworkflow"
+						? "원본 Goal이 활성화되어 있습니다. 먼저 /goal drop으로 종료하세요."
+						: "ZZWorkflow가 활성화되어 있습니다. 먼저 /zzw-goal drop으로 종료하세요.",
+				);
 				return;
 			}
 			if (this.goalModeEnabled) {
-				this.showStatus("Goal mode is already active. Use /goal to manage it, or /goal drop to start over.");
+				this.showStatus(
+					controller === "zzworkflow"
+						? "ZZWorkflow가 이미 실행 중입니다. /zzw-goal로 관리하거나 /zzw-goal drop으로 종료하세요."
+						: "목표 모드가 이미 실행 중입니다. /goal로 관리하거나 /goal drop으로 새로 시작하세요.",
+				);
 				return;
 			}
 			if (this.#getPausedGoalState()) {
-				this.showWarning("Resume the current goal first, or drop it before setting a new objective.");
+				this.showWarning("먼저 현재 목표를 재개하거나 삭제한 뒤 새 목표를 설정하세요.");
 				return;
 			}
 
+			this.editor.clearDraft();
 			const initial = rest?.trim()
 				? rest.trim()
-				: (await this.showHookEditor("Guided goal", undefined, undefined, { promptStyle: true }))?.trim();
+				: (await this.#requestGuidedGoalInput("목표 인터뷰 · 개발하려는 내용을 입력하고 Enter를 누르세요"))?.trim();
 			if (!initial) return;
+			this.#presentGuidedGoalUserMessage(initial);
 
 			const messages: GuidedGoalMessage[] = [{ role: "user", content: initial }];
 			let latestDraftObjective: string | undefined;
@@ -3446,23 +3779,25 @@ export class InteractiveMode implements InteractiveModeContext {
 			// Codex socket instead of leaking one per turn (#5471 review).
 			const guidedGoalSessionId = newGuidedGoalSessionId(this.session);
 			for (let turn = 0; turn < 6; turn++) {
-				const result = await runGuidedGoalTurn(this.session, { messages, sideSessionId: guidedGoalSessionId });
+				const result = await this.#runGuidedGoalInterviewTurn(messages, guidedGoalSessionId);
 				if (result.objective?.trim()) latestDraftObjective = result.objective.trim();
 				if (result.kind === "question") {
 					messages.push({ role: "assistant", content: result.question });
-					const answer = (
-						await this.showHookEditor(result.question, undefined, undefined, { promptStyle: true })
-					)?.trim();
+					const answer = (await this.#requestGuidedGoalAnswer(result, turn))?.trim();
 					if (!answer) return;
 					messages.push({ role: "user", content: answer });
 					continue;
 				}
 
+				this.#presentGuidedGoalAssistantMessage(result.objective);
 				const finalObjective = (
-					await this.showHookEditor("Review guided goal", result.objective, undefined, { promptStyle: true })
+					await this.#requestGuidedGoalInput(
+						"목표 검토 · 필요하면 수정한 뒤 Enter를 눌러 확정하세요",
+						result.objective,
+					)
 				)?.trim();
 				if (!finalObjective) return;
-				await this.#startGoalFromObjective(finalObjective);
+				await this.#startGoalFromObjective(finalObjective, controller);
 				return;
 			}
 
@@ -3470,24 +3805,31 @@ export class InteractiveMode implements InteractiveModeContext {
 			// salvage the latest non-empty model objective draft seen on any earlier turn. A final
 			// question turn may omit `objective`; that must not erase a usable draft.
 			if (latestDraftObjective) {
+				this.#presentGuidedGoalAssistantMessage(latestDraftObjective);
 				const finalObjective = (
-					await this.showHookEditor("Review guided goal", latestDraftObjective, undefined, { promptStyle: true })
+					await this.#requestGuidedGoalInput(
+						"목표 검토 · 필요하면 수정한 뒤 Enter를 눌러 확정하세요",
+						latestDraftObjective,
+					)
 				)?.trim();
 				if (finalObjective) {
-					await this.#startGoalFromObjective(finalObjective);
+					await this.#startGoalFromObjective(finalObjective, controller);
 					return;
 				}
 			}
-			this.showWarning("Guided goal setup needs more detail. Run /guided-goal again with a narrower objective.");
+			this.showWarning(
+				`목표를 확정하려면 정보가 더 필요합니다. 범위를 좁혀 /${controller === "zzworkflow" ? "zzw-guided-goal" : "guided-goal"}을 다시 실행하세요.`,
+			);
 		} catch (error) {
+			this.cancelGuidedGoalInput();
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}
 
-	async #dispatchGoalSubcommand(sub: GoalSubcommand, rest: string): Promise<void> {
+	async #dispatchGoalSubcommand(sub: GoalSubcommand, rest: string, controller: GoalController): Promise<void> {
 		switch (sub) {
 			case "set":
-				await this.#handleGoalSetSubcommand(rest);
+				await this.#handleGoalSetSubcommand(rest, controller);
 				return;
 			case "show":
 				this.#showGoalDetails();
@@ -3613,8 +3955,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		await this.#exitGoalMode({ reason: "dropped" });
 	}
 
-	async #startGoalFromObjective(objective: string): Promise<void> {
-		await this.#enterGoalMode({ objective, silent: true });
+	async #startGoalFromObjective(objective: string, controller: GoalController = "goal"): Promise<void> {
+		await this.#enterGoalMode({ objective, silent: true, controller });
 		this.#resetGoalContinuationSuppression();
 		if (!this.session.isStreaming && this.onInputCallback) {
 			this.onInputCallback(this.startPendingSubmission({ text: objective }));
@@ -3636,7 +3978,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 	}
 
-	async #handleGoalSetSubcommand(rest: string): Promise<void> {
+	async #handleGoalSetSubcommand(rest: string, controller: GoalController): Promise<void> {
 		if (!this.goalModeEnabled && this.#getPausedGoalState()) {
 			this.showWarning("Resume the current goal first, or drop it before setting a new objective.");
 			return;
@@ -3649,7 +3991,7 @@ export class InteractiveMode implements InteractiveModeContext {
 			await this.#replaceGoalFromObjective(objective);
 			return;
 		}
-		await this.#startGoalFromObjective(objective);
+		await this.#startGoalFromObjective(objective, controller);
 	}
 
 	/** Manually (re-)open the plan-review overlay — bound to `/plan-review`. Lets
@@ -3901,7 +4243,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		this.#focusController.dispose();
 
 		// Surface an explicit "Closing session…" line so the user sees a reason
-		// for the pause while `session.dispose()` flushes memory consolidate and
+		// for the pause while `session.dispose()` flushes session state and
 		// other cleanups (issue #3641). The await on the next line yields the
 		// event loop, giving requestRender() a tick to paint the status before
 		// dispose blocks.
@@ -3914,13 +4256,13 @@ export class InteractiveMode implements InteractiveModeContext {
 		// The teardown is registered lazily in `init()` — a `/exit` reached
 		// before `init()` completed falls back to a direct dispose.
 		const stillClosingTimer = setTimeout(() => {
-			this.showStatus("Still closing… (flushing memory backend / network)");
+			this.showStatus("아직 종료 중입니다… (세션 상태와 네트워크 정리)");
 		}, STILL_CLOSING_DELAY_MS);
 		try {
 			if (this.#signalTeardown) {
 				await this.#signalTeardown();
 			} else {
-				await this.session.dispose({ mnemopiConsolidateTimeoutMs: SHUTDOWN_CONSOLIDATE_BUDGET_MS });
+				await this.session.dispose();
 			}
 		} finally {
 			clearTimeout(stillClosingTimer);
@@ -4401,8 +4743,8 @@ export class InteractiveMode implements InteractiveModeContext {
 		return this.#commandController.handleRenameCommand(title);
 	}
 
-	handleMemoryCommand(text: string): Promise<void> {
-		return this.#commandController.handleMemoryCommand(text);
+	handleKnowledgeCommand(text: string): Promise<void> {
+		return this.#commandController.handleKnowledgeCommand(text);
 	}
 
 	async handleSTTToggle(): Promise<void> {

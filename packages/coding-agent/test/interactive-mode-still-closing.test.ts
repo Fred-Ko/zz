@@ -74,7 +74,7 @@ describe("InteractiveMode long shutdown status", () => {
 		expect(statuses).toEqual(["Closing session…"]);
 		vi.advanceTimersByTime(1);
 		await flushMicrotasks();
-		expect(statuses).toEqual(["Closing session…", "Still closing… (flushing memory backend / network)"]);
+		expect(statuses).toEqual(["Closing session…", "아직 종료 중입니다… (세션 상태와 네트워크 정리)"]);
 
 		teardown.resolve();
 		await shutdown;

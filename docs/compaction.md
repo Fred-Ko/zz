@@ -227,7 +227,7 @@ Final stored summary is merged as:
 2. Serialize with `serializeConversation()`.
 3. Wrap in `<conversation>...</conversation>`.
 4. Optionally include `<previous-summary>...</previous-summary>`.
-5. Optionally inject extension hook context and active memory-backend compaction context as `<additional-context>` entries.
+5. Optionally inject extension hook context as `<additional-context>` entries.
 6. Execute summarization prompt with `SUMMARIZATION_SYSTEM_PROMPT`.
 
 Prompt selection:

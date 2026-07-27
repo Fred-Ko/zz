@@ -2,7 +2,6 @@ import {
 	Agent,
 	type AgentEvent,
 	type AgentMessage,
-	type AgentOptions,
 	type AgentTelemetryConfig,
 	type AgentTool,
 	AppendOnlyContextManager,
@@ -15,7 +14,6 @@ import type {
 	Message,
 	Model,
 	ModelUsageHealth,
-	ProviderSessionState,
 	SimpleStreamOptions,
 } from "@oh-my-pi/pi-ai";
 import type { Dialect } from "@oh-my-pi/pi-ai/dialect";
@@ -34,7 +32,6 @@ import {
 	formatAdvisorContextPrompt,
 } from "./advisor";
 import { AsyncJobManager } from "./async";
-import { AutoLearnController, buildAutoLearnInstructions } from "./autolearn/controller";
 import { createAutoresearchExtension } from "./autoresearch";
 import { loadCapability } from "./capability";
 import { type Rule, ruleCapability, setActiveRules } from "./capability/rule";
@@ -94,7 +91,6 @@ import {
 	setActiveSkills,
 } from "./extensibility/skills";
 import { type FileSlashCommand, loadSlashCommands as loadSlashCommandsInternal } from "./extensibility/slash-commands";
-import type { HindsightSessionState } from "./hindsight/state";
 import { LocalProtocolHandler, type LocalProtocolOptions } from "./internal-urls";
 import { LSP_STARTUP_EVENT_CHANNEL, type LspStartupEvent } from "./lsp/startup-events";
 import {
@@ -106,9 +102,7 @@ import {
 	parseMCPToolName,
 } from "./mcp";
 import { MCP_CONNECTION_STATUS_EVENT_CHANNEL, type McpConnectionStatusEvent } from "./mcp/startup-events";
-import { createSessionMemoryRuntimeContext, resolveMemoryBackend } from "./memory-backend";
-import { MEMORY_BACKEND_TOOL_NAMES } from "./memory-backend/tool-names";
-import type { MnemopiSessionState } from "./mnemopi/state";
+import knowledgePolicyPrompt from "./prompts/system/knowledge-policy.md" with { type: "text" };
 import lateDiagnosticTemplate from "./prompts/tools/lsp-late-diagnostic.md" with { type: "text" };
 import { AgentLifecycleManager } from "./registry/agent-lifecycle";
 import { type AgentRef, AgentRegistry, MAIN_AGENT_ID } from "./registry/agent-registry";
@@ -194,7 +188,7 @@ import {
 	WriteTool,
 	warmupLspServers,
 } from "./tools";
-import { isMCPToolName, normalizeToolNames } from "./tools/builtin-names";
+import { isMCPToolName, normalizeToolNames, ZZWORKFLOW_TOOL_NAMES } from "./tools/builtin-names";
 import { ToolContextStore } from "./tools/context";
 import { isIrcEnabled } from "./tools/hub";
 import { getImageGenTools } from "./tools/image-gen";
@@ -474,10 +468,6 @@ export interface CreateAgentSessionOptions {
 	requireYieldTool?: boolean;
 	/** Task recursion depth (for subagent sessions). Default: 0 */
 	taskDepth?: number;
-	/** Parent Hindsight state to alias for subagent memory tools. */
-	parentHindsightSessionState?: HindsightSessionState;
-	/** Parent Mnemopi state to alias for subagent memory tools. */
-	parentMnemopiSessionState?: MnemopiSessionState;
 	/** Pre-allocated agent identity for IRC routing. Default: "Main" for top-level, parentTaskPrefix-derived for sub. */
 	agentId?: string;
 	/** Display name for the agent in IRC. Default: "main" or "sub". */
@@ -726,7 +716,7 @@ export async function loadCliExtensionProviders(
 export async function discoverSkills(
 	cwd?: string,
 	_agentDir?: string,
-	settings?: SkillsSettings,
+	settings?: SkillsSettings & { enableBundledKnowledge?: boolean },
 ): Promise<{ skills: Skill[]; warnings: SkillWarning[] }> {
 	return await loadSkillsInternal({
 		...settings,
@@ -1054,87 +1044,6 @@ function buildMCPPromptCommands(manager: MCPManager): LoadedCustomCommand[] {
 	return commands;
 }
 
-/** Dependencies used to construct an isolated auto-learn capture agent. */
-export interface AutoLearnCaptureRunnerOptions {
-	sourceAgent: Agent;
-	captureTools: AgentTool[];
-	createAgent: (options: AgentOptions) => Agent;
-	onPayload?: SimpleStreamOptions["onPayload"];
-	onResponse?: SimpleStreamOptions["onResponse"];
-	createSessionId?: () => string;
-}
-
-/** Build a private capture runner over a detached message snapshot and provider session. */
-export function createAutoLearnCaptureRunner(
-	options: AutoLearnCaptureRunnerOptions,
-): (content: string, signal?: AbortSignal) => Promise<void> {
-	return async (content, signal) => {
-		if (options.captureTools.length === 0 || signal?.aborted) return;
-		const captureModel = options.sourceAgent.state.model;
-		if (!captureModel) return;
-
-		const captureSessionId = options.createSessionId?.() ?? Bun.randomUUIDv7();
-		const captureProviderSessionState = new Map<string, ProviderSessionState>();
-		const captureMessages = options.sourceAgent.state.messages.map((message): AgentMessage => {
-			if (message.role === "assistant") {
-				return { ...message, responseId: undefined, providerPayload: undefined };
-			}
-			if (message.role === "user" || message.role === "developer") {
-				return { ...message, providerPayload: undefined };
-			}
-			return message;
-		});
-		const captureAgent = options.createAgent({
-			initialState: {
-				systemPrompt: [...options.sourceAgent.state.systemPrompt],
-				model: captureModel,
-				thinkingLevel: options.sourceAgent.state.thinkingLevel,
-				disableReasoning: options.sourceAgent.state.disableReasoning,
-				tools: options.captureTools,
-				messages: captureMessages,
-			},
-			sessionId: captureSessionId,
-			promptCacheKey: captureSessionId,
-			providerSessionState: captureProviderSessionState,
-			getApiKey: requestModel => options.sourceAgent.getApiKey?.(requestModel),
-			onPayload: options.onPayload,
-			onResponse: options.onResponse,
-		});
-		captureAgent.setMetadataResolver(provider => options.sourceAgent.metadataForProvider(provider));
-		const captureMessage: CustomMessage = {
-			role: "custom",
-			customType: "autolearn-nudge",
-			content,
-			display: false,
-			attribution: "agent",
-			timestamp: Date.now(),
-		};
-		const abortCapture = () => captureAgent.abort(signal?.reason);
-		signal?.addEventListener("abort", abortCapture, { once: true });
-		try {
-			if (signal?.aborted) {
-				abortCapture();
-				return;
-			}
-			await captureAgent.prompt(captureMessage);
-		} catch (error) {
-			if (!signal?.aborted) throw error;
-		} finally {
-			signal?.removeEventListener("abort", abortCapture);
-			for (const [providerKey, state] of captureProviderSessionState) {
-				try {
-					state.close();
-				} catch (error) {
-					logger.warn("Failed to close auto-learn capture provider state", {
-						providerKey,
-						error: String(error),
-					});
-				}
-			}
-			captureProviderSessionState.clear();
-		}
-	};
-}
 /**
  * Create an AgentSession with the specified options.
  *
@@ -1207,6 +1116,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		options.settingsManager ??
 		logger.time("settings", Settings.init, { cwd, agentDir }));
 	logger.time("initializeWithSettings", initializeWithSettings, settings);
+	const restrictToolNames = options.restrictToolNames === true;
 	if (!options.modelRegistry) {
 		modelRegistry.refreshInBackground();
 	}
@@ -1258,6 +1168,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			? logger.time("discoverSkills", discoverSkills, cwd, agentDir, {
 					...skillsSettings,
 					disabledExtensions: disabledExtensionIds,
+					enableBundledKnowledge: !restrictToolNames && settings.get("knowledge.enabled"),
 				})
 			: undefined;
 	discoveredSkillsPromise?.catch(() => {});
@@ -1432,8 +1343,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		});
 	}
 
-	const taskDepth = options.taskDepth ?? 0;
-
 	// Resolves the session/agent thinking level using the same precedence we
 	// apply at startup: explicit option → persisted session entry → restored
 	// model selector suffix → default role's explicit selector → selected
@@ -1552,7 +1461,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 	let session!: AgentSession;
 	let hasSession = false;
 	let hasRegistered = false;
-	const restrictToolNames = options.restrictToolNames === true;
 	const enableLsp = !restrictToolNames && (options.enableLsp ?? true);
 	const asyncMaxJobs = Math.min(100, Math.max(1, settings.get("async.maxJobs") ?? 100));
 	// Only the first top-level session in a process owns an AsyncJobManager.
@@ -1653,8 +1561,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			trackEvalExecution: (execution, abortController) =>
 				session ? session.trackEvalExecution(execution, abortController) : execution,
 			getSessionId: () => sessionManager.getSessionId?.() ?? null,
-			getHindsightSessionState: () => session?.getHindsightSessionState(),
-			getMnemopiSessionState: () => session?.getMnemopiSessionState(),
+			getKnowledgeRuntime: () => session?.getKnowledgeRuntime() ?? Promise.resolve(undefined),
 			getAgentId: () => resolvedAgentId,
 			getToolByName: name => session?.getToolByName(name),
 			agentRegistry,
@@ -1764,6 +1671,17 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 
 		// Create built-in tools (already wrapped with meta notice formatting)
 		const builtinTools = await logger.time("createAllTools", createTools, toolSession, options.toolNames);
+		// ZZWorkflow tools are registered for top-level sessions but remain dormant
+		// until `/zzw-goal` or `/zzw-guided-goal` activates them. Constructing them
+		// here fixes the mode-entry path: setActiveToolsByName can only expose tools
+		// that already exist in the session registry.
+		const dormantZZWorkflowTools: Tool[] = [];
+		if (!restrictToolNames && (options.taskDepth ?? 0) === 0 && !options.parentTaskPrefix) {
+			for (const name of ZZWORKFLOW_TOOL_NAMES) {
+				const tool = await logger.time(`createTools:${name}:session`, BUILTIN_TOOLS[name], toolSession);
+				if (tool) dormantZZWorkflowTools.push(wrapToolWithMetaNotice(tool));
+			}
+		}
 
 		// Restricted sessions cannot inherit or discover MCP capabilities.
 		const enableMCP = !restrictToolNames && (options.enableMCP ?? true);
@@ -1855,7 +1773,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// to mirror the AsyncJobManager ownership rule.
 		if (mcpManager && !options.parentTaskPrefix) MCPManager.setInstance(mcpManager);
 
-		const builtInToolNames = builtinTools.map(t => t.name);
+		const builtInToolNames = [...builtinTools, ...dormantZZWorkflowTools].map(t => t.name);
 		let customToolPaths: ToolPathWithSource[] = [];
 		const inlineExtensions: ExtensionFactory[] = [];
 		if (!restrictToolNames) {
@@ -2480,7 +2398,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			cwd,
 			sessionManager,
 			modelRegistry,
-			() => (hasSession ? createSessionMemoryRuntimeContext(session, agentDir, cwd) : undefined),
 			settings,
 			localProtocolOptions,
 		);
@@ -2528,7 +2445,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		// All built-in tools are active (conditional tools like git/ask return null from factory if disabled)
 		const builtInRegistryToolNames = new Set<string>();
 		const toolRegistry = new Map<string, Tool>();
-		for (const tool of builtinTools) {
+		for (const tool of [...builtinTools, ...dormantZZWorkflowTools]) {
 			toolRegistry.set(tool.name, tool);
 			builtInRegistryToolNames.add(tool.name);
 		}
@@ -2627,33 +2544,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		): Promise<BuildSystemPromptResult> => {
 			toolContextStore.setToolNames(toolNames);
 			const promptTools = buildSystemPromptToolMetadata(tools);
-			const memoryBackend = restrictToolNames ? undefined : await resolveMemoryBackend(settings);
-			const memoryInstructions = memoryBackend
-				? await memoryBackend.buildDeveloperInstructions(agentDir, settings, session)
-				: undefined;
 
-			// Build combined append prompt: memory instructions + auto-learn guidance
-			// + MCP server instructions. For UI sessions MCP discovery is deferred, so
+			// Build the append prompt from the deliberate ZZ Knowledge policy and
+			// MCP server instructions. For UI sessions MCP discovery is deferred, so
 			// `getServerInstructions()` is empty until the background connect completes;
 			// the rebuild that `refreshMCPTools` triggers post-discovery then picks up
 			// the now-connected servers' instructions, so they join the prompt for the
 			// rest of the session.
 			const serverInstructions = mcpManager?.getServerInstructions();
-			// Drive guidance off the auto-learn BUILTINS that createTools actually built
-			// (provenance, not just an active name): `builtInToolNames` excludes a
-			// custom/extension tool that merely shares the name, and reflects the
-			// session-start build — so a subagent that filtered them out, a mid-session
-			// enable that never built them, or a same-named custom tool while auto-learn
-			// is off all get no guidance.
-			const autoLearnInstructions = restrictToolNames
-				? undefined
-				: buildAutoLearnInstructions({
-						manageSkill: builtInToolNames.includes("manage_skill"),
-						learn: builtInToolNames.includes("learn"),
-					});
 			const appendParts: string[] = [];
-			if (memoryInstructions) appendParts.push(memoryInstructions);
-			if (autoLearnInstructions) appendParts.push(autoLearnInstructions);
+			if (!restrictToolNames && settings.get("knowledge.enabled")) appendParts.push(knowledgePolicyPrompt);
 			let appendPrompt: string | undefined = appendParts.length > 0 ? appendParts.join("\n\n") : undefined;
 			if (serverInstructions && serverInstructions.size > 0) {
 				const parts: string[] = [];
@@ -2707,7 +2607,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 				secretsEnabled,
 				workspaceTree: workspaceTreePromise,
 				includeWorkspaceTree,
-				memoryRootEnabled: memoryBackend?.id === "local",
 				model: getActiveModelString(),
 				includeModelInPrompt: settings.get("includeModelInPrompt"),
 				personality: agentKind === "sub" ? "none" : settings.get("personality"),
@@ -2741,18 +2640,16 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		) {
 			explicitlyRequestedToolNames.push("yield");
 		}
-		// Auto-learn builtins are force-included into the registry by `createTools`
-		// for enabled top-level sessions (tools/index.ts), but — like `yield` above —
-		// an explicit `toolNames` list would otherwise drop them from the ACTIVE set,
-		// leaving the nudge/guidance pointing at tools the model cannot call. Activate
-		// exactly the builtins createTools built (`builtInToolNames` — provenance, so a
-		// same-named custom/extension tool is never force-activated when auto-learn is
-		// off) to keep guidance, controller, and the active set consistent.
+		// The Knowledge-managed skill tool is force-included into the registry by
+		// `createTools` for enabled top-level sessions (tools/index.ts), but — like
+		// `yield` above — an explicit `toolNames` list would otherwise drop it from
+		// the ACTIVE set. Activate only the built-in created by `createTools`
+		// (`builtInToolNames` tracks provenance), so a same-named custom or extension
+		// tool is never force-activated when ZZ Knowledge is off.
 		if (!restrictToolNames && explicitlyRequestedToolNames) {
-			for (const name of ["manage_skill", "learn"]) {
-				if (builtInToolNames.includes(name) && !explicitlyRequestedToolNames.includes(name)) {
-					explicitlyRequestedToolNames.push(name);
-				}
+			const name = "manage_skill";
+			if (builtInToolNames.includes(name) && !explicitlyRequestedToolNames.includes(name)) {
+				explicitlyRequestedToolNames.push(name);
 			}
 		}
 		const requestedToolNames = explicitlyRequestedToolNames ?? toolNamesFromRegistry;
@@ -2881,7 +2778,14 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		};
 
 		const transformContext = async (messages: AgentMessage[], _signal?: AbortSignal) => {
-			const withContext = await extensionRunner.emitContext(messages);
+			const knowledgeContext = await session?.buildKnowledgeContextMessage();
+			const currentMessages = knowledgeContext
+				? messages.filter(
+						message => !(message.role === "custom" && message.customType === "zz-knowledge-working-set"),
+					)
+				: messages;
+			if (knowledgeContext) currentMessages.splice(Math.max(0, currentMessages.length - 1), 0, knowledgeContext);
+			const withContext = await extensionRunner.emitContext(currentMessages);
 			return wrapSteeringForModel(withContext);
 		};
 		// Per-request provider-context transforms. Obfuscate FIRST so secrets are
@@ -2920,7 +2824,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 		const initialTools = initialToolNames
 			.map(name => toolRegistry.get(name))
 			.filter((tool): tool is AgentTool => tool !== undefined);
-		const autoLearnCaptureTools = initialTools.filter(tool => tool.name === "manage_skill" || tool.name === "learn");
 
 		const openaiWebsocketSetting = settings.get("providers.openaiWebsockets") ?? "off";
 		const preferOpenAICodexWebsockets =
@@ -3102,6 +3005,7 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			sessionManager,
 			settings,
 			autoApprove: options.autoApprove,
+			knowledgeEnabled: !restrictToolNames && settings.get("knowledge.enabled"),
 			evalKernelOwnerId,
 			// Defined only for top-level sessions (creation is gated above).
 			// AgentSession uses this to decide whether it may dispose the global
@@ -3120,16 +3024,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 			skillsSettings: settings.getGroup("skills"),
 			modelRegistry,
 			toolRegistry,
-			memoryAgentDir: agentDir,
-			memoryTaskDepth: taskDepth,
-			createMemoryTools: restrictToolNames
-				? undefined
-				: async () => {
-						const tools = await Promise.all(
-							MEMORY_BACKEND_TOOL_NAMES.map(name => BUILTIN_TOOLS[name](toolSession)),
-						);
-						return tools.filter((tool): tool is AgentTool => tool !== null);
-					},
 			createComputerTool: restrictToolNames
 				? undefined
 				: async () => (await BUILTIN_TOOLS.computer(toolSession)) ?? null,
@@ -3313,95 +3207,6 @@ export async function createAgentSession(options: CreateAgentSessionOptions = {}
 						if (!startupQuiet) eventBus.emit(LSP_STARTUP_EVENT_CHANNEL, event);
 					}
 				})();
-			}
-		}
-
-		const startMemoryBackend = async () => {
-			const memoryBackend = await resolveMemoryBackend(settings);
-			await memoryBackend.start({
-				session,
-				settings,
-				modelRegistry,
-				agentDir,
-				taskDepth,
-				parentHindsightSessionState: options.parentHindsightSessionState,
-				parentMnemopiSessionState: options.parentMnemopiSessionState,
-			});
-		};
-
-		const runAutoLearnCapture = createAutoLearnCaptureRunner({
-			sourceAgent: agent,
-			captureTools: autoLearnCaptureTools,
-			onPayload,
-			onResponse,
-			createAgent: captureOptions => {
-				const captureModel = captureOptions.initialState?.model;
-				const captureSessionId = captureOptions.sessionId;
-				if (!captureModel || !captureSessionId) throw new Error("Auto-learn capture identity is incomplete");
-				return new Agent({
-					...captureOptions,
-					cwd: sessionManager.getCwd(),
-					cwdResolver: () => sessionManager.getCwd(),
-					convertToLlm: convertToLlmFinal,
-					transformContext: async messages => wrapSteeringForModel(messages),
-					transformProviderContext: async (context, transformModel) => {
-						const transformed = obfuscator ? obfuscateProviderContext(obfuscator, context) : context;
-						return clampProviderContextImages(transformed, transformModel);
-					},
-					thinkingBudgets: agent.thinkingBudgets,
-					temperature: agent.temperature,
-					topP: agent.topP,
-					topK: agent.topK,
-					minP: agent.minP,
-					presencePenalty: agent.presencePenalty,
-					repetitionPenalty: agent.repetitionPenalty,
-					serviceTierResolver: agent.serviceTierResolver,
-					hideThinkingSummary: agent.hideThinkingSummary,
-					maxRetryDelayMs: agent.maxRetryDelayMs,
-					kimiApiFormat,
-					preferWebsockets: preferOpenAICodexWebsockets,
-					getToolContext: toolCall => toolContextStore.getContext(toolCall),
-					streamFn: settingsAwareStreamFn,
-					transformToolCallArguments,
-					resolveFallbackTool: resolveDeviceTool,
-					intentTracing: !!intentField,
-					pruneToolDescriptions: inlineToolDescriptors,
-					dialect: resolveDialect(settings.get("tools.format"), captureModel),
-					abortOnFabricatedToolResult: settings.get("tools.abortOnFabricatedResult"),
-					appendOnlyContext: shouldEnableAppendOnlyContext(
-						settings.get("provider.appendOnlyContext"),
-						captureModel,
-					)
-						? new AppendOnlyContextManager()
-						: undefined,
-				});
-			},
-		});
-
-		// Auto-learn can immediately trigger a private capture after the first real
-		// stop. When a memory backend is selected, install that backend's
-		// per-session state first so the capture turn's `learn` tool observes the
-		// same initialized state as normal memory tools. Other sessions keep memory
-		// startup in the background to preserve the existing startup profile.
-		//
-		// Gated on `autolearn.enabled` to match the tools: `createTools` builds the
-		// `learn`/`manage_skill` registry ONCE at session start and no settings
-		// change rebuilds it, so installing the controller while disabled would let a
-		// mid-session enable fire a nudge pointing at tools the session never built.
-		// Activation is therefore a session-start decision for BOTH the controller
-		// and the tools; the fire-time re-check in `#onAgentEnd` still handles a
-		// mid-session DISABLE. The subscription lives for the session's lifetime; the
-		// reference is intentionally discarded (the listener retains it).
-		if (!restrictToolNames) {
-			if (settings.get("autolearn.enabled") && taskDepth === 0) {
-				await logger.time("startMemoryStartupTask", startMemoryBackend);
-				new AutoLearnController({
-					session,
-					settings,
-					capture: content => session.runAutolearnCapture(signal => runAutoLearnCapture(content, signal)),
-				});
-			} else {
-				void logger.time("startMemoryStartupTask", startMemoryBackend);
 			}
 		}
 

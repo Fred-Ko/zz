@@ -2,7 +2,16 @@ import { escapeXmlText, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import goalBudgetLimitPrompt from "../prompts/goals/goal-budget-limit.md" with { type: "text" };
 import goalContinuationPrompt from "../prompts/goals/goal-continuation.md" with { type: "text" };
 import goalModeActivePrompt from "../prompts/goals/goal-mode-active.md" with { type: "text" };
-import type { Goal, GoalBudgetSteering, GoalModeState, GoalRuntimeEvent, GoalTokenUsage } from "./state";
+import {
+	type Goal,
+	type GoalBudgetSteering,
+	type GoalController,
+	type GoalModeState,
+	type GoalRuntimeEvent,
+	type GoalTokenUsage,
+	isZZWorkflowGoalState,
+	resolveGoalController,
+} from "./state";
 import type { GoalLifecycleEvent } from "./task-lifecycle";
 
 export interface GoalRuntimeHost {
@@ -181,7 +190,9 @@ export class GoalRuntime {
 		}
 	}
 
-	async #notifyLifecycle(event: GoalLifecycleEvent): Promise<void> {
+	async #notifyLifecycle(event: GoalLifecycleEvent, controller?: GoalController): Promise<void> {
+		const resolvedController = controller ?? resolveGoalController(this.#host.getState());
+		if (resolvedController !== "zzworkflow") return;
 		await this.#host.handleLifecycleEvent?.(event);
 	}
 
@@ -379,7 +390,7 @@ export class GoalRuntime {
 		await this.#withAccounting(() => this.#flushUsageLocked(steering, currentUsage));
 	}
 
-	#createGoalState(objective: string, tokenBudget: number | undefined): GoalModeState {
+	#createGoalState(objective: string, tokenBudget: number | undefined, controller: GoalController): GoalModeState {
 		const now = this.#now();
 		const goal: Goal = {
 			id: String(Snowflake.next()),
@@ -391,10 +402,14 @@ export class GoalRuntime {
 			createdAt: now,
 			updatedAt: now,
 		};
-		return { enabled: true, mode: "active", goal };
+		return { enabled: true, mode: "active", controller, goal };
 	}
 
-	async createGoal(input: { objective: string; tokenBudget?: number }): Promise<GoalModeState> {
+	async createGoal(input: {
+		objective: string;
+		tokenBudget?: number;
+		controller?: GoalController;
+	}): Promise<GoalModeState> {
 		const objective = input.objective.trim();
 		if (!objective) throw new Error("objective is required when op=create");
 		validateTokenBudget(input.tokenBudget);
@@ -403,7 +418,7 @@ export class GoalRuntime {
 			if (existing?.goal && existing.goal.status !== "dropped" && existing.goal.status !== "complete") {
 				throw new Error("cannot create a new goal because this session already has a goal");
 			}
-			const state = this.#createGoalState(objective, input.tokenBudget);
+			const state = this.#createGoalState(objective, input.tokenBudget, input.controller ?? "goal");
 			this.#budgetReportedFor = undefined;
 			this.#markActiveAccounting(state.goal);
 			await this.#commitState(state, { persist: "goal" });
@@ -423,7 +438,7 @@ export class GoalRuntime {
 			}
 			await this.#flushUsageLocked("suppressed");
 			const previousGoal = cloneGoal(existing.goal);
-			const state = this.#createGoalState(objective, input.tokenBudget);
+			const state = this.#createGoalState(objective, input.tokenBudget, resolveGoalController(existing));
 			this.#budgetReportedFor = undefined;
 			this.#markActiveAccounting(state.goal);
 			await this.#commitState(state, { persist: "goal" });
@@ -504,7 +519,7 @@ export class GoalRuntime {
 				state: { ...state, enabled: false, goal: dropped },
 			});
 			await this.#commitState(undefined, { persist: "none", emit: false });
-			await this.#notifyLifecycle({ type: "dropped", goal: dropped });
+			await this.#notifyLifecycle({ type: "dropped", goal: dropped }, resolveGoalController(state));
 			return dropped;
 		});
 	}
@@ -522,7 +537,9 @@ export class GoalRuntime {
 			if (state.goal.status === "dropped") {
 				throw new Error("cannot complete a dropped goal");
 			}
-			await this.#host.assertGoalCompletionReady?.();
+			if (isZZWorkflowGoalState(state)) {
+				await this.#host.assertGoalCompletionReady?.();
+			}
 			state.enabled = false;
 			state.goal.status = "complete";
 			state.goal.updatedAt = this.#now();

@@ -13,7 +13,7 @@ afterEach(async () => {
 });
 
 describe("workflow Git checkpoints", () => {
-	it("creates a shareable tracked-change commit without modifying the worktree", async () => {
+	it("creates a local tracked-change checkpoint without modifying the worktree", async () => {
 		const dir = await fs.mkdtemp(path.join(os.tmpdir(), "omp-workflow-checkpoint-"));
 		dirs.push(dir);
 		await $`git init --initial-branch=main`.cwd(dir).quiet();

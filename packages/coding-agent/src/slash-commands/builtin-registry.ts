@@ -26,7 +26,7 @@ import {
 	getPluginsCacheDir,
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
-import { resolveMemoryBackend } from "../memory-backend";
+import { summarizeTaskLifecycle, type TaskLifecycleState, type TaskPlanStep } from "../goals/task-lifecycle";
 import { runPauseScreen } from "../modes/components/pause-screen";
 import { describeLoopLimitRuntime } from "../modes/loop-limit";
 import { theme } from "../modes/theme/theme";
@@ -115,6 +115,116 @@ const AUTOCOMPLETE_DETAIL_LIMIT = 48;
 function shortDetail(value: string, limit = AUTOCOMPLETE_DETAIL_LIMIT): string {
 	const singleLine = value.replace(/\s+/g, " ").trim();
 	return singleLine.length <= limit ? singleLine : `${singleLine.slice(0, limit - 1)}…`;
+}
+
+function planStepDepth(step: TaskPlanStep, byId: ReadonlyMap<string, TaskPlanStep>): number {
+	let depth = 0;
+	let parentId = step.parentStepId;
+	const visited = new Set([step.id]);
+	while (parentId && depth < 8 && !visited.has(parentId)) {
+		visited.add(parentId);
+		depth++;
+		parentId = byId.get(parentId)?.parentStepId;
+	}
+	return depth;
+}
+
+function renderZZWorkflowPlan(state: TaskLifecycleState): string {
+	const byId = new Map(state.plan.steps.map(step => [step.id, step]));
+	const latestChange = state.plan.changes?.at(-1);
+	const lines = [
+		`ZZWorkflow Plan v${state.planVersion} · ${state.plan.approval ?? "draft"} · ${state.plan.status}`,
+		`기준 버전: v${state.plan.basedOnVersion ?? "없음"} · 승인 영향: ${state.plan.approvalImpact ?? "초기"}`,
+	];
+	if (latestChange) {
+		lines.push(`최근 변경: ${latestChange.kind}/${latestChange.classification} · ${latestChange.rationale}`);
+	}
+	lines.push("");
+	for (const step of state.plan.steps) {
+		const indent = "  ".repeat(planStepDepth(step, byId));
+		const relations = [
+			step.dependsOn.length > 0 ? `depends: ${step.dependsOn.join(", ")}` : undefined,
+			(step.supersedes?.length ?? 0) > 0 ? `supersedes: ${step.supersedes?.join(", ")}` : undefined,
+			(step.supersededBy?.length ?? 0) > 0 ? `replaced-by: ${step.supersededBy?.join(", ")}` : undefined,
+		].filter((value): value is string => value !== undefined);
+		lines.push(
+			`${indent}- [${step.status}] ${step.id} · ${step.kind ?? "work"} · ${step.phase} · ${step.content}${relations.length > 0 ? ` · ${relations.join(" · ")}` : ""}`,
+		);
+	}
+	return lines.join("\n");
+}
+
+function renderZZWorkflowHistory(state: TaskLifecycleState): string {
+	const changes = state.plan.changes ?? [];
+	if (changes.length === 0) return `ZZWorkflow Plan 변경 이력 · v${state.planVersion}\n- 기록된 변경이 없습니다.`;
+	return [
+		`ZZWorkflow Plan 변경 이력 · ${changes.length}개`,
+		...changes.map(change =>
+			[
+				`- v${change.planVersion} ← v${change.basedOnPlanVersion} · ${change.kind}/${change.classification} · ${change.approvalImpact}`,
+				`  추가 ${change.addedStepIds.length} · 수정 ${change.updatedStepIds.length} · 교체 ${change.supersededStepIds.length} · 무효화 ${change.invalidatedStepIds.length} · 보존 ${change.preservedStepIds.length}`,
+				`  근거: ${change.rationale}`,
+			].join("\n"),
+		),
+	].join("\n");
+}
+
+function renderZZWorkflowDiff(state: TaskLifecycleState, requestedVersion?: string): string {
+	const parsedVersion = requestedVersion ? Number(requestedVersion.replace(/^v/i, "")) : undefined;
+	const change =
+		parsedVersion === undefined
+			? state.plan.changes?.at(-1)
+			: state.plan.changes?.find(candidate => candidate.planVersion === parsedVersion);
+	if (!change) {
+		return requestedVersion
+			? `Plan v${requestedVersion.replace(/^v/i, "")} 변경 기록을 찾을 수 없습니다.`
+			: "표시할 Plan 변경 기록이 없습니다.";
+	}
+	const list = (label: string, values: readonly string[]): string =>
+		`- ${label}: ${values.length > 0 ? values.join(", ") : "없음"}`;
+	return [
+		`ZZWorkflow Plan Diff · v${change.planVersion} ← v${change.basedOnPlanVersion}`,
+		`- 유형: ${change.kind}/${change.classification} · 승인 영향 ${change.approvalImpact}`,
+		list("추가", change.addedStepIds),
+		list("수정", change.updatedStepIds),
+		list("교체", change.supersededStepIds),
+		list("무효화", change.invalidatedStepIds),
+		list("보존", change.preservedStepIds),
+		list("실패 원인 단계", change.failedStepIds),
+		list("반증된 가정", change.contradictedAssumptionIds),
+		list("관찰", change.observationIds),
+		list("증거", change.evidenceIds),
+		`- 이유: ${change.rationale}`,
+	].join("\n");
+}
+
+function renderZZWorkflowWhy(state: TaskLifecycleState, stepId: string): string {
+	const step = state.plan.steps.find(candidate => candidate.id === stepId);
+	if (!step) return `Plan 단계 ${stepId}을 찾을 수 없습니다.`;
+	const changes = (state.plan.changes ?? []).filter(change =>
+		[
+			...change.addedStepIds,
+			...change.updatedStepIds,
+			...change.supersededStepIds,
+			...change.invalidatedStepIds,
+			...change.preservedStepIds,
+		].includes(stepId),
+	);
+	const evidence = state.evidence.filter(item => item.planStepId === stepId);
+	const observations = (state.observations ?? []).filter(item =>
+		item.affects.some(affected => affected.type === "step" && affected.id === stepId),
+	);
+	return [
+		`ZZWorkflow 단계 설명 · ${step.id}`,
+		`- 상태: ${step.status} · 종류: ${step.kind ?? "work"}`,
+		`- 내용: ${step.content}`,
+		`- 계보: 최초 v${step.originPlanVersion ?? "?"} · 최근 변경 v${step.lastChangedPlanVersion ?? "?"}`,
+		`- 의존성: ${step.dependsOn.join(", ") || "없음"}`,
+		`- 가정: ${step.assumptionIds?.join(", ") || "없음"}`,
+		`- 증거: ${evidence.length > 0 ? evidence.map(item => `${item.id}${item.stale ? `(${item.staleReason ?? "stale"})` : ""}`).join(", ") : "없음"}`,
+		`- 관찰: ${observations.length > 0 ? observations.map(item => `${item.id}(${item.kind})`).join(", ") : "없음"}`,
+		`- 변경 이유: ${changes.length > 0 ? changes.map(change => `v${change.planVersion} ${change.rationale}`).join(" / ") : "기록 없음"}`,
+	].join("\n");
 }
 
 function formatTokenCount(value: number): string {
@@ -390,6 +500,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			if (!runtime.ctx.settings.get("goal.enabled" as SettingPath)) return "Goal: disabled in settings";
 			if (runtime.ctx.planModeEnabled) return "Goal: blocked by plan mode";
 			const state = runtime.ctx.session.getGoalModeState();
+			if (state?.controller === "zzworkflow") return "Goal: blocked by active ZZWorkflow";
 			return state ? `Goal: ${state.goal.status} (${shortDetail(state.goal.objective)})` : "Goal: off";
 		},
 		handleTui: async (command, runtime) => {
@@ -405,6 +516,136 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		handleTui: async (command, runtime) => {
 			await runtime.ctx.handleGuidedGoalCommand(command.args || undefined);
 			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "zzw-goal",
+		description: "ZZWorkflow 목표를 시작하거나 관리합니다",
+		subcommands: [
+			{ name: "set", description: "ZZWorkflow 목표 설정 또는 교체", usage: "<objective>" },
+			{ name: "show", description: "현재 목표 상세 보기" },
+			{ name: "pause", description: "현재 ZZWorkflow 일시 중지" },
+			{ name: "resume", description: "일시 중지된 ZZWorkflow 재개" },
+			{ name: "drop", description: "현재 ZZWorkflow 폐기" },
+			{ name: "budget", description: "토큰 예산 조정", usage: "<N|off>" },
+		],
+		inlineHint: "[objective]",
+		allowArgs: true,
+		getTuiAutocompleteDescription: runtime => {
+			if (!runtime.ctx.settings.get("goal.enabled" as SettingPath)) return "ZZW: 설정에서 비활성화됨";
+			if (runtime.ctx.planModeEnabled) return "ZZW: Plan 모드 때문에 시작할 수 없음";
+			const state = runtime.ctx.session.getGoalModeState();
+			if (state?.controller !== "zzworkflow") return state ? "ZZW: 원본 Goal이 활성화됨" : "ZZW: 꺼짐";
+			return `ZZW: ${state.goal.status} (${shortDetail(state.goal.objective)})`;
+		},
+		handleTui: async (command, runtime) => {
+			await runtime.ctx.handleZZWorkflowGoalCommand(command.args || undefined);
+			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "zzw-guided-goal",
+		description: "인터뷰로 목표를 구체화한 뒤 ZZWorkflow를 시작합니다",
+		inlineHint: "[rough objective]",
+		allowArgs: true,
+		handleTui: async (command, runtime) => {
+			await runtime.ctx.handleZZWorkflowGuidedGoalCommand(command.args || undefined);
+			runtime.ctx.editor.setText("");
+		},
+	},
+	{
+		name: "zzw",
+		description: "권위 있는 ZZWorkflow 상태를 조회하고 Plan을 승인합니다",
+		subcommands: [
+			{ name: "status", description: "Show task, phase, readiness, and active step" },
+			{ name: "plan", description: "Show the current hierarchical Plan DAG and lineage" },
+			{ name: "history", description: "Show Plan version changes and affected counts" },
+			{ name: "diff", description: "Show one Plan version's structured change", usage: "[version]" },
+			{ name: "why", description: "Explain one Plan step, its evidence, and change reasons", usage: "<step-id>" },
+			{ name: "evidence", description: "Show verification and operation evidence" },
+			{ name: "operations", description: "Show the operation journal" },
+			{ name: "approve-plan", description: "Approve the current draft Plan DAG" },
+		],
+		allowArgs: true,
+		handle: async (command, runtime) => {
+			const lifecycle = runtime.session.taskLifecycle;
+			const state = lifecycle.state;
+			const goalState = runtime.session.getGoalModeState();
+			if (!state || goalState?.controller !== "zzworkflow") {
+				await runtime.output(
+					"활성 ZZWorkflow가 없습니다. 먼저 /zzw-goal 또는 /zzw-guided-goal로 목표를 시작하세요.",
+				);
+				return commandConsumed();
+			}
+			const { verb: action, rest } = parseSubcommand(command.args.trim() || "status");
+			if (action === "approve-plan") {
+				const plan = await lifecycle.approvePlan();
+				await runtime.output(`Plan DAG v${plan.version}을 승인했습니다. 첫 dependency-ready 단계를 실행합니다.`);
+				await runtime.requestGoalContinuation?.();
+				return commandConsumed();
+			}
+			if (action === "plan") {
+				await runtime.output(renderZZWorkflowPlan(state));
+				return commandConsumed();
+			}
+			if (action === "history") {
+				await runtime.output(renderZZWorkflowHistory(state));
+				return commandConsumed();
+			}
+			if (action === "diff") {
+				await runtime.output(renderZZWorkflowDiff(state, rest || undefined));
+				return commandConsumed();
+			}
+			if (action === "why") {
+				if (!rest) return usage("사용법: /zzw why <step-id>", runtime);
+				await runtime.output(renderZZWorkflowWhy(state, rest));
+				return commandConsumed();
+			}
+			if (action === "evidence") {
+				const lines = [
+					`ZZWorkflow Evidence · ${state.evidence.length}개`,
+					...state.evidence.map(
+						evidence =>
+							`- ${evidence.id} · ${evidence.type}/${evidence.trust ?? "legacy-untrusted"} · ${evidence.outcome ?? "observed"} · step ${evidence.planStepId ?? "없음"}${evidence.stale ? " · stale" : ""}`,
+					),
+				];
+				await runtime.output(lines.join("\n"));
+				return commandConsumed();
+			}
+			if (action === "operations") {
+				const operations = lifecycle.operations;
+				await runtime.output(
+					[
+						`Operation Journal · ${operations.length}개`,
+						...operations.map(
+							operation =>
+								`- ${operation.id} · ${operation.status} · ${operation.toolName} · step ${operation.planStepId ?? "없음"}`,
+						),
+					].join("\n"),
+				);
+				return commandConsumed();
+			}
+			if (action !== "status") {
+				return usage("사용법: /zzw <status|plan|history|diff|why|evidence|operations|approve-plan>", runtime);
+			}
+			const activeStepId = summarizeTaskLifecycle(state)?.activePlanStepId;
+			const active = activeStepId ? state.plan.steps.find(step => step.id === activeStepId) : undefined;
+			await runtime.output(
+				[
+					"ZZWorkflow 상태",
+					`- Task: ${state.taskId}`,
+					`- Phase: ${state.phase}`,
+					`- Specification: v${state.specVersion}`,
+					`- Plan: v${state.planVersion} · ${state.plan.approval ?? "draft"} · ${state.plan.status}`,
+					`- Goal: ${goalState.enabled ? "active" : goalState.goal.status}`,
+					`- 활성 단계: ${active ? `${active.id} · ${active.content}` : "없음"}`,
+					`- 다음 동작: ${summarizeTaskLifecycle(state)?.requiredNextAction ?? "없음"}`,
+					`- Reconciliation: ${state.reconciliation ? `${state.reconciliation.stepId} · ${state.reconciliation.classification ?? "분류 대기"} · ${state.reconciliation.requiredAction}` : "없음"}`,
+					`- Readiness: ${state.readiness.ready ? "ready" : state.readiness.blockers.map(blocker => blocker.code).join(", ")}`,
+					`- 미해결 operation: ${state.pendingOperationIds.length}개`,
+				].join("\n"),
+			);
+			return commandConsumed();
 		},
 	},
 	{
@@ -1751,75 +1992,133 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 		},
 	},
 	{
-		name: "memory",
-		description: "Inspect and operate memory maintenance",
-		acpDescription: "Manage memory",
-		acpInputHint: "<subcommand>",
+		name: "knowledge",
+		description: "ZZ 장기 지식 상태와 검토 대기 항목을 확인합니다",
+		acpDescription: "ZZ Knowledge 상태 확인",
+		acpInputHint: "<status|banks|reviews|groups|invalidate-group|restore-group|purge-group|flush>",
 		subcommands: [
-			{ name: "view", description: "Show current memory injection payload" },
-			{ name: "stats", description: "Show memory backend statistics" },
-			{ name: "diagnose", description: "Run memory backend diagnostics" },
-			{ name: "clear", description: "Clear persisted memory data and artifacts" },
-			{ name: "reset", description: "Alias for clear" },
-			{ name: "enqueue", description: "Enqueue memory consolidation maintenance" },
-			{ name: "rebuild", description: "Alias for enqueue" },
-			{ name: "mm list", description: "List mental models on the active bank" },
-			{ name: "mm show", description: "Show one mental model (id required)" },
-			{
-				name: "mm refresh",
-				description: "Refresh auto-refresh models bank-wide, or one model by id",
-			},
-			{ name: "mm history", description: "Diff the change history of a mental model" },
-			{ name: "mm seed", description: "Create any built-in mental models that are missing" },
-			{ name: "mm delete", description: "Delete a mental model from the bank (id required)" },
-			{ name: "mm reload", description: "Re-pull the cached <mental_models> block" },
+			{ name: "status", description: "현재 공급자, outbox, working set 상태 표시" },
+			{ name: "banks", description: "현재 Global/Repository Bank 이름과 ID 표시" },
+			{ name: "reviews", description: "장기 저장 전 검토할 지식 후보 표시" },
+			{ name: "groups", description: "이 저장소에서 한 요청으로 저장된 지식 그룹 표시" },
+			{ name: "invalidate-group", description: "요청 그룹 전체를 recall에서 제외" },
+			{ name: "restore-group", description: "무효화한 요청 그룹 전체를 복구" },
+			{ name: "purge-group", description: "--confirm과 함께 요청 그룹 전체를 영구 삭제" },
+			{ name: "flush", description: "보류 중인 Hindsight 전송 재시도" },
 		],
 		allowArgs: true,
 		handle: async (command, runtime) => {
-			const verb = (command.args.trim().split(/\s+/)[0] ?? "").toLowerCase() || "view";
-			const backend = await resolveMemoryBackend(runtime.settings);
-			switch (verb) {
-				case "view": {
-					const payload = await backend.buildDeveloperInstructions(
-						runtime.settings.getAgentDir(),
-						runtime.settings,
-						runtime.session,
-					);
-					await runtime.output(payload || "Memory payload is empty.");
-					return commandConsumed();
-				}
-				case "clear":
-				case "reset": {
-					await backend.clear(runtime.settings.getAgentDir(), runtime.cwd, runtime.session);
-					await runtime.session.refreshBaseSystemPrompt();
-					await runtime.output("Memory cleared.");
-					return commandConsumed();
-				}
-				case "enqueue":
-				case "rebuild": {
-					await backend.enqueue(runtime.settings.getAgentDir(), runtime.cwd, runtime.session);
-					await runtime.output("Memory consolidation enqueued.");
-					return commandConsumed();
-				}
-				case "stats":
-				case "diagnose": {
-					const hook = verb === "stats" ? backend.stats : backend.diagnose;
-					const payload = await hook?.(runtime.settings.getAgentDir(), runtime.cwd, runtime.session);
-					await runtime.output(payload ?? `Memory ${verb} is not available for the ${backend.id} backend.`);
-					return commandConsumed();
-				}
-				case "mm":
+			const action = command.args.trim().split(/\s+/, 1)[0]?.toLowerCase() || "status";
+			const knowledge = await runtime.session.getKnowledgeRuntime();
+			if (!knowledge) {
+				await runtime.output("ZZ Knowledge System을 사용할 수 없습니다. knowledge.enabled 설정을 확인하세요.");
+				return commandConsumed();
+			}
+			if (action === "status") {
+				const status = await knowledge.status();
+				const bankProfile = (bank: typeof status.globalBank): string =>
+					bank?.profile
+						? `${bank.profile.name}@${bank.profile.version}${bank.profile.drifted ? " (drift)" : ""}`
+						: "확인 전";
+				const providerActivity = status.providerActivity
+					? `${status.providerActivity.operation} · ${status.providerActivity.status === "ok" ? "성공" : "실패"}${status.providerActivity.statusCode ? ` · HTTP ${status.providerActivity.statusCode}` : ""} · ${status.providerActivity.at}${status.providerActivity.error ? ` · ${status.providerActivity.error}` : ""}`
+					: "호출 전";
+				await runtime.output(
+					[
+						`활성화: ${status.enabled ? "예" : "아니요"}`,
+						`공급자: ${status.provider}`,
+						`보안 경계: ${status.securityBoundary}`,
+						`Global Bank: ${status.globalBank?.displayName ?? "없음"}`,
+						`Global Bank ID: ${status.globalBank?.bankId ?? "없음"}`,
+						`Global Bank profile: ${bankProfile(status.globalBank)}`,
+						`Repository Bank: ${status.repositoryBank?.displayName ?? "없음"}`,
+						`Repository Bank ID: ${status.repositoryBank?.bankId ?? "없음"}`,
+						`Repository Bank profile: ${bankProfile(status.repositoryBank)}`,
+						`전송 대기: ${status.queued}개`,
+						`검토 대기: ${status.pendingReviews}개`,
+						`요청 그룹: ${status.groupCount}개`,
+						`Working set: ${status.workingSet?.purpose ?? "없음"}`,
+						`최근 Hindsight 호출: ${providerActivity}`,
+					].join("\n"),
+				);
+				return commandConsumed();
+			}
+			if (action === "banks") {
+				const banks = await knowledge.listBanks();
+				await runtime.output(
+					banks.length === 0
+						? "활성화된 ZZ Knowledge Bank가 없습니다."
+						: banks
+								.map(
+									bank =>
+										`${bank.kind === "global" ? "Global" : "Repository"}: ${bank.displayName}\nID: ${bank.bankId}`,
+								)
+								.join("\n\n"),
+				);
+				return commandConsumed();
+			}
+			if (action === "reviews") {
+				const reviews = await knowledge.listReviews();
+				const output =
+					reviews.length === 0
+						? "검토 대기 중인 장기 지식 후보가 없습니다."
+						: reviews
+								.map(
+									review =>
+										`${review.taskId}\n${review.candidates.map(item => `- ${item.statement}`).join("\n")}`,
+								)
+								.join("\n\n");
+				await runtime.output(output);
+				return commandConsumed();
+			}
+			if (action === "flush") {
+				await knowledge.flushOutbox();
+				const status = await knowledge.status();
+				await runtime.output(`지식 outbox 전송을 시도했습니다. 남은 항목: ${status.queued}개`);
+				return commandConsumed();
+			}
+			if (action === "groups") {
+				const groups = await knowledge.listGroups();
+				await runtime.output(
+					groups.length === 0
+						? "이 저장소에서 생성된 지식 요청 그룹이 없습니다."
+						: groups
+								.map(
+									group =>
+										`${group.id} · ${group.status} · ${group.memberCount}개 · ${group.origin} · ${group.createdAt}`,
+								)
+								.join("\n"),
+				);
+				return commandConsumed();
+			}
+			if (action === "invalidate-group" || action === "restore-group" || action === "purge-group") {
+				const args = command.args.trim().split(/\s+/);
+				const groupId = args[1];
+				const confirmed = args.includes("--confirm");
+				if (!groupId || (action === "purge-group" && !confirmed)) {
 					return usage(
-						"Mental-model maintenance via /memory mm is unsupported in ACP mode; use the hindsight HTTP API directly.",
+						action === "purge-group"
+							? "사용법: /knowledge purge-group <group-id> --confirm"
+							: `사용법: /knowledge ${action} <group-id>`,
 						runtime,
 					);
-				default:
-					return usage("Usage: /memory <view|stats|diagnose|clear|reset|enqueue|rebuild>", runtime);
+				}
+				await knowledge.curateGroup({
+					action: action === "invalidate-group" ? "invalidate" : action === "restore-group" ? "restore" : "purge",
+					groupId,
+					reason: `user command: ${action}`,
+				});
+				await runtime.output(`지식 요청 그룹 ${groupId}: ${action} 처리를 완료했습니다.`);
+				return commandConsumed();
 			}
+			return usage(
+				"사용법: /knowledge <status|banks|reviews|groups|invalidate-group|restore-group|purge-group|flush>",
+				runtime,
+			);
 		},
 		handleTui: async (command, runtime) => {
 			runtime.ctx.editor.setText("");
-			await runtime.ctx.handleMemoryCommand(command.text);
+			await runtime.ctx.handleKnowledgeCommand(command.text);
 		},
 	},
 	{
@@ -2815,6 +3114,7 @@ export async function executeBuiltinSlashCommand(
 	if (parsed.args.length > 0 && !command.allowArgs) {
 		return false;
 	}
+	runtime.onCommandAccepted?.(parsed);
 	// Collab guests run a read-mostly replica: session-mutating builtins are
 	// host-only; the allowlist covers purely local/read-only commands.
 	if (runtime.ctx.collabGuest && !COLLAB_GUEST_ALLOWED_COMMANDS[command.name]) {
@@ -2844,6 +3144,9 @@ export async function executeBuiltinSlashCommand(
 				ctx.showStatus(text);
 			},
 			refreshCommands: () => ctx.refreshSlashCommandState(),
+			requestGoalContinuation: async () => {
+				await ctx.requestGoalContinuation?.();
+			},
 			reloadPlugins: async () => {
 				const projectPath = await resolveActiveProjectRegistryPath(ctx.sessionManager.getCwd());
 				clearPluginRootsAndCaches(projectPath ? [projectPath] : undefined);

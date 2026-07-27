@@ -953,7 +953,7 @@ function shouldInheritDefaultBeforePriority(role: ModelRole): boolean {
  * reasoning chain, but (unlike the `slow` role, see
  * {@link shouldInheritDefaultBeforePriority}) never inherits the primary's
  * model, so it stays a distinct strong model out of the box. The `tiny` role —
- * the override for online title/memory/classifier tasks — reuses the `smol`
+ * the override for online title/classifier tasks — reuses the `smol`
  * fast chain so an unset tiny role auto-resolves to the same fast model smol
  * would pick.
  */

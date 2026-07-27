@@ -21,15 +21,32 @@ export const BUILTIN_TOOL_NAMES = [
 	"todo",
 	"web_search",
 	"write",
-	"memory_edit",
-	"retain",
-	"recall",
-	"reflect",
-	"learn",
+	"knowledge_recall",
+	"knowledge_retain",
+	"knowledge_retain_document",
+	"knowledge_reflect",
+	"knowledge_curate",
+	"knowledge_group",
+	"zzw_get_state",
+	"zzw_propose_plan",
+	"zzw_patch_plan",
+	"zzw_report_observation",
+	"zzw_report_step_result",
+	"zzw_submit_verification",
 	"manage_skill",
 ] as const;
 
 export type BuiltinToolName = (typeof BUILTIN_TOOL_NAMES)[number];
+
+/** Model-callable tools exposed only while ZZWorkflow owns the active goal. */
+export const ZZWORKFLOW_TOOL_NAMES = [
+	"zzw_get_state",
+	"zzw_propose_plan",
+	"zzw_patch_plan",
+	"zzw_report_observation",
+	"zzw_report_step_result",
+	"zzw_submit_verification",
+] as const satisfies readonly BuiltinToolName[];
 
 /** Hidden built-ins: constructible and `--tools`-addressable, but never part of the default active set. */
 export const HIDDEN_TOOL_NAMES = ["yield", "goal"] as const;
