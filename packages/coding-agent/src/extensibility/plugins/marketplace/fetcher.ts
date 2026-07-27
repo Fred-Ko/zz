@@ -193,10 +193,14 @@ export function parseMarketplaceCatalog(content: string, filePath: string): Mark
 // ── fetchMarketplace ──────────────────────────────────────────────────
 
 /**
- * Catalog paths tried in priority order: omp-namespaced override first, then
- * the Claude Code-compatible fallback so existing marketplaces keep loading.
+ * Catalog paths tried in priority order: ZZ-native catalog first, then legacy
+ * and Claude Code-compatible fallbacks so existing marketplaces keep loading.
  */
-const CATALOG_RELATIVE_PATHS: readonly string[] = [".omp-plugin/marketplace.json", ".claude-plugin/marketplace.json"];
+const CATALOG_RELATIVE_PATHS: readonly string[] = [
+	".zz-plugin/marketplace.json",
+	".omp-plugin/marketplace.json",
+	".claude-plugin/marketplace.json",
+];
 
 async function readMarketplaceCatalog(
 	root: string,

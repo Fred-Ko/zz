@@ -11,14 +11,14 @@ ZZ는 Bun 기반 모노레포로 구성된 터미널 코딩 에이전트다. 핵
 `packages/coding-agent`의 `zz` CLI이며, 모델 호출·도구 실행·TUI·지속 상태·협업·장기 지식을
 명확한 계층으로 분리한다.
 
-이 포크는 upstream OMP 위에 다음을 추가하거나 변경한다.
+이 포크는 upstream 코드베이스 위에 다음을 추가하거나 변경한다.
 
 - 사용자-facing 이름과 기본 설정 루트를 `zz`, `~/.zz`, `.zz/`로 변경
 - 특별한 언어 요청이 없을 때 한국어를 기본 대화 언어로 주입
 - 상태줄 상세 다중 행 레이아웃
 - Goal 기반 영속 Task/Spec/Plan DAG와 검증·복구 수명주기
 - `zz`에 내장된 로컬 SQLite ZZWorkflow registry
-- upstream OMP Memory를 대체하는 독립 ZZ Knowledge System
+- 제거한 upstream memory를 대체하는 독립 ZZ Knowledge System
 - 자동 QA 보고 기능 제거
 
 ## 2. 패키지 경계

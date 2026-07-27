@@ -1,11 +1,11 @@
 /**
- * `omp models` — list, search, and refresh available models.
+ * `zz models` — list, search, and refresh available models.
  *
  * Subcommands:
  * - `ls` (default): list every available model grouped by provider.
  * - `find <substring>`: list models whose provider, id, or name contains the substring.
  * - `refresh`: force an online catalog re-fetch (ignoring the model cache TTL),
- *   then list. This is the supported replacement for `rm -rf ~/.omp/models.db`
+ *   then list. This is the supported replacement for `rm -rf ~/.zz/models.db`
  *   when a provider ships a new model that the 24h cache has not picked up yet.
  *
  * `ls`/`find` use the cache when fresh (`online-if-uncached`); only `refresh`
@@ -47,7 +47,7 @@ export interface ModelsCommandArgs {
 /**
  * Known action keywords. Any other first token (e.g. `openai-codex`) is treated
  * as a provider/substring filter for the default `ls` view, so every provider
- * name doubles as an `omp models <provider>` shortcut.
+ * name doubles as a `zz models <provider>` shortcut.
  */
 const KNOWN_ACTIONS: Record<string, ModelsAction> = {
 	ls: "ls",
@@ -170,7 +170,7 @@ function boxTable(columns: BoxColumn[], rows: string[][]): string[] {
 	return lines;
 }
 
-/** `omp models ls`/`find`: provider-grouped listing (one box table per provider). */
+/** `zz models ls`/`find`: provider-grouped listing (one box table per provider). */
 function renderProviderModels(
 	modelRegistry: ModelRegistry,
 	action: ModelsAction,
@@ -345,7 +345,7 @@ export async function runModelsListing(options: RunModelsListingOptions): Promis
 }
 
 /**
- * Entry point for the standalone `omp models` command: bootstraps auth storage,
+ * Entry point for the standalone `zz models` command: bootstraps auth storage,
  * settings, and the model registry, force/cache-refreshes built-in providers per
  * the chosen action, then delegates to {@link runModelsListing}.
  */

@@ -1,5 +1,5 @@
 /**
- * OMP extension package roots.
+ * ZZ extension package roots.
  *
  * An "extension package root" is a directory configured via either
  * `extensions:` in user/project settings or the `--extension`/`-e` CLI flag
@@ -124,10 +124,10 @@ async function isDirectory(p: string): Promise<boolean> {
  * are dropped):
  *
  * 1. CLI roots injected via {@link injectOmpExtensionCliRoots}
- * 2. Project `<cwd>/.omp/settings.json#extensions`
- * 3. User `~/.omp/agent/settings.json#extensions`
+ * 2. Project `<cwd>/.zz/settings.json#extensions` (then legacy fallback)
+ * 3. User `~/.zz/agent/settings.json#extensions`
  * 4. Enabled npm/link plugins installed under `<plugins>/node_modules/` (for
- *    `omp install <pkg>` / `omp plugin install` / `omp plugin link`). Marketplace
+ *    `zz install <pkg>` / `zz plugin install` / `zz plugin link`). Marketplace
  *    installs are loaded by the `claude-plugins` provider and are excluded here.
  * Only entries that resolve to a directory on disk are returned; file
  * entrypoints contribute zero sub-discovery surface and are filtered out.
@@ -180,7 +180,7 @@ export async function listOmpExtensionRoots(ctx: LoadContext): Promise<OmpExtens
  * Marketplace installs also create runtime symlinks for enable-state persistence,
  * but their resources are discovered through the `claude-plugins` provider.
  * Filtering them here prevents `/status` from showing the same plugin under both
- * "Claude Code Marketplace" and "OMP Extension Packages".
+ * "Claude Code Marketplace" and "ZZ Extension Packages".
  */
 async function realpathOrResolved(p: string): Promise<string> {
 	try {

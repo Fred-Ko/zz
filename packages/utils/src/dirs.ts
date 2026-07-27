@@ -502,12 +502,12 @@ export function getProjectAgentDir(cwd: string = getProjectDir()): string {
 // Config-root subdirectories (~/.zz/*)
 // =============================================================================
 
-/** Get the reports directory (~/.omp/reports). */
+/** Get the reports directory (~/.zz/reports). */
 export function getReportsDir(): string {
 	return dirs.rootSubdir("reports", "state");
 }
 
-/** Get the logs directory (~/.omp/logs). */
+/** Get the logs directory (~/.zz/logs). */
 export function getLogsDir(): string {
 	return dirs.rootSubdir("logs", "state");
 }
@@ -518,7 +518,7 @@ export function getLogPath(date = new Date(), pid = process.pid): string {
 }
 
 /**
- * Get the plugins directory (~/.omp/plugins or its XDG equivalent).
+ * Get the plugins directory (~/.zz/plugins or its XDG equivalent).
  *
  * No-arg form (production callers) goes through the XDG-aware DirResolver so
  * reads and writes always agree. The optional `home` parameter is for test
@@ -534,25 +534,39 @@ export function getPluginsDir(home?: string): string {
 	return dirs.rootSubdir("plugins", "data");
 }
 
-/** Where npm installs packages (~/.omp/plugins/node_modules). */
+/** Where npm installs packages (~/.zz/plugins/node_modules). */
 export function getPluginsNodeModules(home?: string): string {
 	return path.join(getPluginsDir(home), "node_modules");
 }
 
-/** Plugin manifest (~/.omp/plugins/package.json). */
+/** Plugin manifest (~/.zz/plugins/package.json). */
 export function getPluginsPackageJson(home?: string): string {
 	return path.join(getPluginsDir(home), "package.json");
 }
 
-/** Plugin lock file (~/.zz/plugins/zz-plugins.lock.json). */
-export function getPluginsLockfile(home?: string): string {
-	const pluginsDir = getPluginsDir(home);
-	const canonical = path.join(pluginsDir, "zz-plugins.lock.json");
+/** Resolve a plugin root's canonical lock file. */
+export function getPluginsLockfileAtRoot(pluginsDir: string): string {
+	return path.join(pluginsDir, "zz-plugins.lock.json");
+}
+
+/** Resolve a plugin root's lock file for reading, accepting the previous filename as a fallback. */
+export function getPluginsLockfileForReadAtRoot(pluginsDir: string): string {
+	const canonical = getPluginsLockfileAtRoot(pluginsDir);
 	const legacy = path.join(pluginsDir, "omp-plugins.lock.json");
 	return !fs.existsSync(canonical) && fs.existsSync(legacy) ? legacy : canonical;
 }
 
-/** Get the remote mount directory (~/.omp/remote). */
+/** Plugin lock file (~/.zz/plugins/zz-plugins.lock.json). */
+export function getPluginsLockfile(home?: string): string {
+	return getPluginsLockfileAtRoot(getPluginsDir(home));
+}
+
+/** Plugin lock file to read, with compatibility fallback for installations created before ZZ. */
+export function getPluginsLockfileForRead(home?: string): string {
+	return getPluginsLockfileForReadAtRoot(getPluginsDir(home));
+}
+
+/** Get the remote mount directory (~/.zz/remote). */
 export function getRemoteDir(): string {
 	return dirs.rootSubdir("remote", "data");
 }
@@ -609,27 +623,27 @@ export function getWorktreesDir(): string {
 	);
 }
 
-/** Get the SSH control socket directory (~/.omp/ssh-control). */
+/** Get the SSH control socket directory (~/.zz/ssh-control). */
 export function getSshControlDir(): string {
 	return dirs.rootSubdir("ssh-control", "state");
 }
 
-/** Get the remote host info directory (~/.omp/remote-host). */
+/** Get the remote host info directory (~/.zz/remote-host). */
 export function getRemoteHostDir(): string {
 	return dirs.rootSubdir("remote-host", "data");
 }
 
-/** Get the managed Python venv directory (~/.omp/python-env). */
+/** Get the managed Python venv directory (~/.zz/python-env). */
 export function getPythonEnvDir(): string {
 	return dirs.rootSubdir("python-env", "data");
 }
 
-/** Get the shared Python gateway state directory (~/.omp/agent/python-gateway; XDG default: $XDG_STATE_HOME/omp/python-gateway). */
+/** Get the shared Python gateway state directory (~/.zz/agent/python-gateway; XDG default: $XDG_STATE_HOME/zz/python-gateway). */
 export function getPythonGatewayDir(): string {
 	return dirs.agentSubdir(undefined, "python-gateway", "state");
 }
 
-/** Get the puppeteer sandbox directory (~/.omp/puppeteer). */
+/** Get the puppeteer sandbox directory (~/.zz/puppeteer). */
 export function getPuppeteerDir(): string {
 	return dirs.rootSubdir("puppeteer", "cache");
 }
@@ -643,7 +657,7 @@ export function getDocsRsCacheDir(): string {
  * Stable 7-character hex digest of an absolute filesystem path.
  *
  * Used to pack the project identity into a single short fs-safe segment
- * (e.g. PR-checkout and task-isolation worktree dirs under `~/.omp/wt/`).
+ * (e.g. PR-checkout and task-isolation worktree dirs under `~/.zz/wt/`).
  * Bun.hash is non-cryptographic — collision space is ~2^28, which is fine
  * for naming a handful of repos on a single machine. Same input on the
  * same Bun runtime yields the same output.
@@ -652,12 +666,12 @@ export function hashPath(absPath: string): string {
 	return Bun.hash(path.resolve(absPath)).toString(16).padStart(16, "0").slice(-7);
 }
 
-/** Get the path to a single worktree directory (~/.omp/wt/<segment>). */
+/** Get the path to a single worktree directory (~/.zz/wt/<segment>). */
 export function getWorktreeDir(segment: string): string {
 	return path.join(getWorktreesDir(), segment);
 }
 
-/** Get the GPU cache path (~/.omp/gpu_cache.json). */
+/** Get the GPU cache path (~/.zz/gpu_cache.json). */
 export function getGpuCachePath(): string {
 	return dirs.rootSubdir("gpu_cache.json", "cache");
 }
@@ -684,48 +698,48 @@ export function getAuthBrokerSnapshotCachePath(): string {
 	return dirs.rootSubdir(path.join("cache", "auth-broker-snapshot.enc"), "cache");
 }
 
-/** Get the local FastEmbed model cache directory (~/.omp/cache/fastembed). */
+/** Get the local FastEmbed model cache directory (~/.zz/cache/fastembed). */
 export function getFastembedCacheDir(): string {
 	return dirs.rootSubdir(path.join("cache", "fastembed"), "cache");
 }
 
-/** Get the on-demand fastembed runtime install root (~/.omp/cache/fastembed-runtime). */
+/** Get the on-demand fastembed runtime install root (~/.zz/cache/fastembed-runtime). */
 export function getFastembedRuntimeDir(): string {
 	return dirs.rootSubdir(path.join("cache", "fastembed-runtime"), "cache");
 }
 
-/** Get the natives directory (~/.omp/natives). */
+/** Get the natives directory (~/.zz/natives). */
 export function getNativesDir(): string {
 	return dirs.rootSubdir("natives", "cache");
 }
 
-/** Get the stats database path (~/.omp/stats.db). */
+/** Get the stats database path (~/.zz/stats.db). */
 export function getStatsDbPath(): string {
 	return dirs.rootSubdir("stats.db", "data");
 }
 
-/** Get the autoresearch state directory (~/.omp/autoresearch). */
+/** Get the autoresearch state directory (~/.zz/autoresearch). */
 export function getAutoresearchDir(): string {
 	return dirs.rootSubdir("autoresearch", "state");
 }
 
-/** Get the per-project autoresearch state directory (~/.omp/autoresearch/<encoded-project>). */
+/** Get the per-project autoresearch state directory (~/.zz/autoresearch/<encoded-project>). */
 export function getAutoresearchProjectDir(encodedProject: string): string {
 	return path.join(getAutoresearchDir(), encodedProject);
 }
 
-/** Get the per-project autoresearch SQLite database path (~/.omp/autoresearch/<encoded-project>.db). */
+/** Get the per-project autoresearch SQLite database path (~/.zz/autoresearch/<encoded-project>.db). */
 export function getAutoresearchDbPath(encodedProject: string): string {
 	return path.join(getAutoresearchDir(), `${encodedProject}.db`);
 }
 
-/** Get the per-run artifact directory (~/.omp/autoresearch/<encoded-project>/runs/<runId>). */
+/** Get the per-run artifact directory (~/.zz/autoresearch/<encoded-project>/runs/<runId>). */
 export function getAutoresearchRunDir(encodedProject: string, runId: number): string {
 	return path.join(getAutoresearchProjectDir(encodedProject), "runs", String(runId).padStart(4, "0"));
 }
 
 // =============================================================================
-// Agent subdirectories (~/.omp/agent/*)
+// Agent subdirectories (~/.zz/agent/*)
 // =============================================================================
 
 /** Get the path to agent.db (SQLite database for settings and auth storage). */
@@ -733,7 +747,7 @@ export function getAgentDbPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "agent.db", "data");
 }
 
-/** Get the last-seen-changelog-version marker file (~/.omp/agent/last-changelog-version). */
+/** Get the last-seen-changelog-version marker file (~/.zz/agent/last-changelog-version). */
 export function getLastChangelogVersionPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "last-changelog-version", "state");
 }
@@ -748,57 +762,52 @@ export function getModelDbPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "models.db", "data");
 }
 
-/** Get the tiny title model cache directory (~/.omp/agent/cache/tiny-models). */
+/** Get the tiny title model cache directory (~/.zz/agent/cache/tiny-models). */
 export function getTinyModelsCacheDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, path.join("cache", "tiny-models"), "cache");
 }
 
-/** Get the document conversion cache directory (~/.omp/agent/cache/document-conversions; XDG default: $XDG_CACHE_HOME/omp/cache/document-conversions). */
+/** Get the document conversion cache directory (~/.zz/agent/cache/document-conversions; XDG default: $XDG_CACHE_HOME/zz/cache/document-conversions). */
 export function getDocumentConversionCacheDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, path.join("cache", "document-conversions"), "cache");
 }
 
-/** Get the sessions directory (~/.omp/agent/sessions). */
+/** Get the sessions directory (~/.zz/agent/sessions). */
 export function getSessionsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "sessions", "data");
 }
 
-/** Get the content-addressed blob store directory (~/.omp/agent/blobs). */
+/** Get the content-addressed blob store directory (~/.zz/agent/blobs). */
 export function getBlobsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "blobs", "data");
 }
 
-/** Get the custom themes directory (~/.omp/agent/themes). */
+/** Get the custom themes directory (~/.zz/agent/themes). */
 export function getCustomThemesDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "themes");
 }
 
-/** Get the tools directory (~/.omp/agent/tools). */
+/** Get the tools directory (~/.zz/agent/tools). */
 export function getToolsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "tools");
 }
 
-/** Get the slash commands directory (~/.omp/agent/commands). */
+/** Get the slash commands directory (~/.zz/agent/commands). */
 export function getCommandsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "commands");
 }
 
-/** Get the prompts directory (~/.omp/agent/prompts). */
+/** Get the prompts directory (~/.zz/agent/prompts). */
 export function getPromptsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "prompts");
 }
 
-/** Get the user-level Python modules directory (~/.omp/agent/modules). */
+/** Get the user-level Python modules directory (~/.zz/agent/modules). */
 export function getAgentModulesDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "modules");
 }
 
-/** Get the memories directory (~/.omp/agent/memories). */
-export function getMemoriesDir(agentDir?: string): string {
-	return dirs.agentSubdir(agentDir, "memories", "state");
-}
-
-/** Get the terminal sessions directory (~/.omp/agent/terminal-sessions). */
+/** Get the terminal sessions directory (~/.zz/agent/terminal-sessions). */
 export function getTerminalSessionsDir(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, "terminal-sessions", "state");
 }
@@ -808,7 +817,7 @@ export function getCrashLogPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, `${APP_NAME}-crash.log`, "state");
 }
 
-/** Get the debug log path (~/.omp/agent/omp-debug.log). */
+/** Get the debug log path (~/.zz/agent/zz-debug.log). */
 export function getDebugLogPath(agentDir?: string): string {
 	return dirs.agentSubdir(agentDir, `${APP_NAME}-debug.log`, "state");
 }
@@ -817,17 +826,17 @@ export function getDebugLogPath(agentDir?: string): string {
 // Project subdirectories (.zz/*)
 // =============================================================================
 
-/** Get the project-level Python modules directory (.omp/modules). */
+/** Get the project-level Python modules directory (.zz/modules). */
 export function getProjectModulesDir(cwd: string = getProjectDir()): string {
 	return path.join(getProjectAgentDir(cwd), "modules");
 }
 
-/** Get the project-level prompts directory (.omp/prompts). */
+/** Get the project-level prompts directory (.zz/prompts). */
 export function getProjectPromptsDir(cwd: string = getProjectDir()): string {
 	return path.join(getProjectAgentDir(cwd), "prompts");
 }
 
-/** Get the project-level plugin overrides path (.omp/plugin-overrides.json). */
+/** Get the project-level plugin overrides path (.zz/plugin-overrides.json). */
 export function getProjectPluginOverridesPath(cwd: string = getProjectDir()): string {
 	return path.join(getProjectAgentDir(cwd), "plugin-overrides.json");
 }
@@ -862,15 +871,15 @@ const INSTALL_ID_FILE = "install-id";
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
- * Persistent per-install UUID stored at `~/.omp/install-id`.
+ * Persistent per-install UUID stored at `~/.zz/install-id`.
  *
  * Generated lazily on first call and persisted with `O_CREAT|O_EXCL` so
  * concurrent first-call races don't clobber each other (loser re-reads the
  * winner's id). Survives independently of agent state: deleting
- * `~/.omp/agent/` does not regenerate it. Provider device and installation
+ * `~/.zz/agent/` does not regenerate it. Provider device and installation
  * identity may key on this id.
  *
- * Anchored to the base config root (`~/.omp/install-id`) regardless of the
+ * Anchored to the base config root (`~/.zz/install-id`) regardless of the
  * active profile: install identity is per-install, not per-profile, so every
  * profile shares one id and the global cache stays correct no matter the
  * profile / `getInstallId` call order.

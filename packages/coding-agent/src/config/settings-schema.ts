@@ -2,6 +2,7 @@ import { THINKING_EFFORTS } from "@oh-my-pi/pi-ai";
 import { DEFAULT_SHARE_URL } from "@oh-my-pi/pi-wire";
 import { SHAPE_VARIANT_NAMES } from "@oh-my-pi/snapcompact";
 import { DEFAULT_RELAY_URL } from "../collab/protocol";
+import { DEFAULT_LIVE_VOICE, LIVE_VOICE_OPTIONS, LIVE_VOICE_VALUES } from "../live/voices";
 import { DEFAULT_STT_MODEL_KEY, STT_MODEL_OPTIONS, STT_MODEL_VALUES } from "../stt/models";
 import { STT_SUBMIT_TRIGGER_OPTIONS, STT_SUBMIT_TRIGGER_VALUES } from "../stt/submit-trigger";
 import { AUTO_THINKING, getConfiguredThinkingLevelMetadata, getThinkingLevelMetadata } from "../thinking";
@@ -235,38 +236,50 @@ export type AnyUiMetadata = UiBase & {
 	ordered?: boolean;
 };
 
-interface BooleanDef {
+/**
+ * Marks a setting whose value is a credential.
+ *
+ * Lives at the top level rather than inside `ui` so it can also describe a
+ * setting the settings panel never shows and therefore cannot carry
+ * `ui.secret`. Read it through `isCredential`, which is the single accessor
+ * both the CLI and the settings panel consult.
+ */
+interface CredentialMarker {
+	credential?: true;
+}
+
+interface BooleanDef extends CredentialMarker {
 	type: "boolean";
 	default: boolean | undefined;
 	ui?: UiBoolean;
 }
 
-interface StringDef {
+interface StringDef extends CredentialMarker {
 	type: "string";
 	default: string | undefined;
 	ui?: UiString;
 }
 
-interface NumberDef {
+interface NumberDef extends CredentialMarker {
 	type: "number";
 	default: number | undefined;
 	ui?: UiNumber;
 }
 
-interface EnumDef<T extends readonly string[]> {
+interface EnumDef<T extends readonly string[]> extends CredentialMarker {
 	type: "enum";
 	values: T;
 	default: T[number];
 	ui?: UiEnum<T>;
 }
 
-interface ArrayDef<T> {
+interface ArrayDef<T> extends CredentialMarker {
 	type: "array";
 	default: T[];
 	ui?: UiArray;
 }
 
-interface RecordDef<T> {
+interface RecordDef<T> extends CredentialMarker {
 	type: "record";
 	default: Record<string, T>;
 	ui?: UiBase;
@@ -373,12 +386,12 @@ export const SETTINGS_SCHEMA = {
 	// ────────────────────────────────────────────────────────────────────────
 	setupVersion: { type: "number", default: 0 },
 
-	// Auth broker — credentials proxied through a remote `omp auth-broker serve`
+	// Auth broker — credentials proxied through a remote `zz auth-broker serve`
 	// host. Hidden from the UI; populate via env vars or hand-edited config.yml.
 	// Env (`OMP_AUTH_BROKER_URL` / `OMP_AUTH_BROKER_TOKEN`) takes precedence so
 	// per-machine overrides remain trivial.
 	"auth.broker.url": { type: "string", default: undefined },
-	"auth.broker.token": { type: "string", default: undefined },
+	"auth.broker.token": { type: "string", default: undefined, credential: true },
 
 	autoResume: {
 		type: "boolean",
@@ -938,7 +951,7 @@ export const SETTINGS_SCHEMA = {
 			group: "Display",
 			label: "Terminal Title Run State",
 			description:
-				"Show the agent run state in the terminal title's separator — an animated spinner while working, '>' when it's your turn, '!' when the agent is waiting on you",
+				"Show the agent run state in the terminal title's separator — an animated spinner while working (a static ':' on Windows), '>' when it's your turn, '!' when the agent is waiting on you",
 		},
 	},
 
@@ -2530,7 +2543,7 @@ export const SETTINGS_SCHEMA = {
 
 	"branchSummary.reserveTokens": { type: "number", default: 16384 },
 
-	// ZZ Knowledge System. This is independent from the removed OMP memory backends.
+	// ZZ Knowledge System. This is independent from the removed legacy memory backends.
 	"knowledge.enabled": {
 		type: "boolean",
 		default: false,
@@ -2722,6 +2735,7 @@ export const SETTINGS_SCHEMA = {
 	},
 	"knowledge.hindsight.apiToken": {
 		type: "string",
+		credential: true,
 		default: undefined,
 		ui: {
 			tab: "knowledge",
@@ -3649,6 +3663,25 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"inspect_image.timeoutMs": {
+		type: "number",
+		default: 300_000,
+		ui: {
+			tab: "tools",
+			group: "Execution",
+			label: "Inspect Image Timeout",
+			description:
+				"Per-request timeout for the inspect_image vision-model call, in milliseconds. A stalled provider fails fast with a timeout error instead of blocking until manual abort. Set to 0 to disable the timeout.",
+			options: [
+				{ value: "0", label: "Disabled" },
+				{ value: "60000", label: "1 minute" },
+				{ value: "120000", label: "2 minutes" },
+				{ value: "180000", label: "3 minutes" },
+				{ value: "300000", label: "5 minutes" },
+			],
+		},
+	},
+
 	"checkpoint.enabled": {
 		type: "boolean",
 		default: false,
@@ -4200,6 +4233,18 @@ export const SETTINGS_SCHEMA = {
 		},
 	},
 
+	"task.enableEffort": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tasks",
+			group: "Subagents",
+			label: "Per-Task Effort",
+			description:
+				"Expose the optional effort parameter on task spawns, allowing callers to override each subagent's thinking level",
+		},
+	},
+
 	"task.maxConcurrency": {
 		type: "number",
 		default: 32,
@@ -4309,6 +4354,20 @@ export const SETTINGS_SCHEMA = {
 			label: "Soft Request Budget Notice",
 			description:
 				"Inject one steering notice when a subagent crosses its soft request budget, asking it to wrap up before the 1.5x forced-yield stop.",
+		},
+	},
+
+	"task.maxEffort": {
+		type: "enum",
+		values: THINKING_EFFORTS,
+		default: "max",
+		ui: {
+			tab: "tasks",
+			group: "Subagents",
+			label: "Maximum Per-Spawn Effort",
+			description:
+				"Maximum reasoning effort allowed for the task tool's per-spawn effort hint. Lower values prevent callers from escalating subagents above this ceiling; the default preserves the model's full range.",
+			options: THINKING_EFFORTS.map(getThinkingLevelMetadata),
 		},
 	},
 
@@ -4568,6 +4627,18 @@ export const SETTINGS_SCHEMA = {
 					description: "Priority serving path: higher reliability, premium per-token pricing",
 				},
 			],
+		},
+	},
+	"live.voice": {
+		type: "enum",
+		values: LIVE_VOICE_VALUES,
+		default: DEFAULT_LIVE_VOICE,
+		ui: {
+			tab: "providers",
+			group: "Services",
+			label: "Live Voice",
+			description: "Voice used by Codex-backed realtime voice sessions",
+			options: LIVE_VOICE_OPTIONS,
 		},
 	},
 	"providers.tts": {
@@ -4992,6 +5063,7 @@ export const SETTINGS_SCHEMA = {
 	"searxng.token": {
 		type: "string",
 		default: undefined,
+		credential: true,
 	},
 
 	"searxng.basicUsername": {
@@ -5002,6 +5074,7 @@ export const SETTINGS_SCHEMA = {
 	"searxng.basicPassword": {
 		type: "string",
 		default: undefined,
+		credential: true,
 	},
 
 	"searxng.categories": {
@@ -5094,6 +5167,20 @@ export function getDefault<P extends SettingPath>(path: P): SettingValue<P> {
 /** Check if a path has UI metadata (should appear in settings panel) */
 export function hasUi(path: SettingPath): boolean {
 	return "ui" in SETTINGS_SCHEMA[path];
+}
+
+/**
+ * Whether a setting holds a credential and must never be printed or exported
+ * without an explicit request. Drives both CLI redaction and settings-panel
+ * masking, so the two cannot disagree.
+ */
+export function isCredential(path: SettingPath): boolean {
+	const def = SETTINGS_SCHEMA[path];
+	if ("credential" in def && def.credential === true) return true;
+	// `ui.secret` predates this marker and still means "never display". Reading
+	// both here keeps ONE accessor, so the two spellings cannot produce
+	// different behaviour on different surfaces.
+	return getUi(path)?.secret === true;
 }
 
 /** Get UI metadata for a path (undefined if no UI) */

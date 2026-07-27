@@ -14,10 +14,10 @@ import { discoverAuthStorage } from "@oh-my-pi/pi-coding-agent/sdk";
 import { removeWithRetries } from "@oh-my-pi/pi-utils";
 
 const ENV_KEYS = [
-	"OMP_AUTH_BROKER_URL",
-	"OMP_AUTH_BROKER_TOKEN",
-	"OMP_AUTH_BROKER_SNAPSHOT_CACHE",
-	"OMP_AUTH_BROKER_SNAPSHOT_TTL_MS",
+	"ZZ_AUTH_BROKER_URL",
+	"ZZ_AUTH_BROKER_TOKEN",
+	"ZZ_AUTH_BROKER_SNAPSHOT_CACHE",
+	"ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS",
 ] as const;
 const PROVIDER = "unit-auth-broker-cache";
 const TOKEN = "coding-agent-cache-token";
@@ -75,10 +75,10 @@ describe("discoverAuthStorage auth-broker snapshot cache", () => {
 	test("boots from a fresh encrypted cache when the broker is down", async () => {
 		const cachePath = path.join(tempDir, "snapshot.enc");
 		const downUrl = "http://127.0.0.1:1";
-		process.env.OMP_AUTH_BROKER_URL = downUrl;
-		process.env.OMP_AUTH_BROKER_TOKEN = TOKEN;
-		process.env.OMP_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
-		process.env.OMP_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
+		process.env.ZZ_AUTH_BROKER_URL = downUrl;
+		process.env.ZZ_AUTH_BROKER_TOKEN = TOKEN;
+		process.env.ZZ_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
+		process.env.ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
 		await writeAuthBrokerSnapshotCache({
 			path: cachePath,
 			token: TOKEN,
@@ -109,10 +109,10 @@ describe("discoverAuthStorage auth-broker snapshot cache", () => {
 				bearerTokens: [TOKEN],
 				disableRefresher: true,
 			});
-			process.env.OMP_AUTH_BROKER_URL = handle.url;
-			process.env.OMP_AUTH_BROKER_TOKEN = TOKEN;
-			process.env.OMP_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
-			process.env.OMP_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
+			process.env.ZZ_AUTH_BROKER_URL = handle.url;
+			process.env.ZZ_AUTH_BROKER_TOKEN = TOKEN;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
 
 			storage = await discoverAuthStorage(tempDir);
 			expect(await storage.getApiKey(PROVIDER)).toBe("broker-api-key");
@@ -133,6 +133,95 @@ describe("discoverAuthStorage auth-broker snapshot cache", () => {
 			});
 			const entry = cached?.credentials.find(candidate => candidate.provider === PROVIDER);
 			expect(entry?.credential).toEqual({ type: "api_key", key: "broker-api-key" });
+		} finally {
+			storage?.close();
+			await handle?.close();
+			brokerStorage.close();
+			brokerStore.close();
+		}
+	});
+
+	test("boots from a fresh cache when revalidation returns a server error", async () => {
+		const cachePath = path.join(tempDir, "snapshot.enc");
+		const server = Bun.serve({
+			port: 0,
+			fetch: () => new Response("temporarily unavailable", { status: 503 }),
+		});
+		const url = server.url.toString();
+		let storage: AuthStorage | undefined;
+		try {
+			process.env.ZZ_AUTH_BROKER_URL = url;
+			process.env.ZZ_AUTH_BROKER_TOKEN = TOKEN;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
+			await writeAuthBrokerSnapshotCache({
+				path: cachePath,
+				token: TOKEN,
+				url,
+				snapshot: makeSnapshot(Date.now()),
+			});
+
+			storage = await discoverAuthStorage(tempDir);
+			expect(await storage.getApiKey(PROVIDER)).toBe("cached-api-key");
+		} finally {
+			storage?.close();
+			server.stop(true);
+		}
+	});
+
+	test("rejects a fresh cache when the broker rejects its bearer token", async () => {
+		const cachePath = path.join(tempDir, "snapshot.enc");
+		const server = Bun.serve({
+			port: 0,
+			fetch: () => new Response("unauthorized", { status: 401 }),
+		});
+		const url = server.url.toString();
+		try {
+			process.env.ZZ_AUTH_BROKER_URL = url;
+			process.env.ZZ_AUTH_BROKER_TOKEN = TOKEN;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
+			await writeAuthBrokerSnapshotCache({
+				path: cachePath,
+				token: TOKEN,
+				url,
+				snapshot: makeSnapshot(Date.now()),
+			});
+
+			await expect(discoverAuthStorage(tempDir)).rejects.toMatchObject({ status: 401 });
+		} finally {
+			server.stop(true);
+		}
+	});
+
+	test("prefers a reachable broker snapshot over a fresh cached snapshot", async () => {
+		const cachePath = path.join(tempDir, "snapshot.enc");
+		const brokerStore = await SqliteAuthCredentialStore.open(path.join(tempDir, "broker.db"));
+		brokerStore.saveApiKey(PROVIDER, "broker-api-key");
+		const brokerStorage = new AuthStorage(brokerStore);
+		await brokerStorage.reload();
+		let handle: AuthBrokerServerHandle | undefined;
+		let storage: AuthStorage | undefined;
+		try {
+			handle = startAuthBroker({
+				storage: brokerStorage,
+				bind: "127.0.0.1:0",
+				bearerTokens: [TOKEN],
+				disableRefresher: true,
+			});
+			process.env.ZZ_AUTH_BROKER_URL = handle.url;
+			process.env.ZZ_AUTH_BROKER_TOKEN = TOKEN;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_CACHE = cachePath;
+			process.env.ZZ_AUTH_BROKER_SNAPSHOT_TTL_MS = "3600000";
+			await writeAuthBrokerSnapshotCache({
+				path: cachePath,
+				token: TOKEN,
+				url: handle.url,
+				snapshot: makeSnapshot(Date.now()),
+			});
+
+			storage = await discoverAuthStorage(tempDir);
+			expect(await storage.getApiKey(PROVIDER)).toBe("broker-api-key");
 		} finally {
 			storage?.close();
 			await handle?.close();

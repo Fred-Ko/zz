@@ -1,7 +1,7 @@
 /**
- * CLI handler for `omp worktree` — list and clean up agent-managed worktrees.
+ * CLI handler for `zz worktree` — list and clean up agent-managed worktrees.
  *
- * Layout under `~/.omp/wt/`:
+ * Layout under `~/.zz/wt/`:
  *
  *   - **PR-checkout worktrees** (`tools/gh.ts`): a regular git worktree dir
  *     containing a `.git` *file* that points back at
@@ -25,7 +25,7 @@ type WorktreeKind = "pr-checkout" | "task-isolation" | "empty" | "stray";
 const TASK_ISOLATION_MOUNT_DIRS = ["m", "merged"] as const;
 
 export interface WorktreeEntry {
-	/** Absolute path to the worktree dir (or stray container) under `~/.omp/wt/`. */
+	/** Absolute path to the worktree dir (or stray container) under `~/.zz/wt/`. */
 	path: string;
 	/** Classification of what we found on disk. */
 	kind: WorktreeKind;
@@ -33,7 +33,7 @@ export interface WorktreeEntry {
 	parentRepo?: string;
 	/** Branch name extracted from the parent's tracking file, when available. */
 	branch?: string;
-	/** When set, the entry is unhealthy and `omp worktree clear` will remove it. */
+	/** When set, the entry is unhealthy and `zz worktree clear` will remove it. */
 	orphanReason?: string;
 }
 

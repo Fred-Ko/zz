@@ -48,7 +48,7 @@ ZZWorkflow, ZZ Knowledge를 서로 다른 제품 계층으로 분리한다.
 
 | 계층          | 사용자 경험                                   | 책임                                                     |
 | ------------- | --------------------------------------------- | -------------------------------------------------------- |
-| 일반 에이전트 | 질문하고 바로 수정·조사                       | OMP 기반의 범용 코딩 작업                                |
+| 일반 에이전트 | 질문하고 바로 수정·조사                       | upstream 기반의 범용 코딩 작업                           |
 | 원본 Goal     | `/goal`, `/guided-goal`                       | 세션 중심의 지속 자율 목표; upstream 경험 보존           |
 | ZZWorkflow    | `/zzw-goal`, `/zzw-guided-goal`, `/zzw`       | Task Contract, Plan DAG, 승인, operation, evidence, 복구 |
 | ZZ Knowledge  | 자연어 기억 요청, `knowledge_*`, `/knowledge` | 범위·근거·수명을 가진 장기 지식의 retain/recall/curation |
@@ -126,13 +126,13 @@ tool receipt로 처리하고, 하나의 요청에서 나온 항목은 같은 gro
 | `zz`         | 사용자-facing CLI 실행 파일                      |
 | ZZWorkflow   | 제어형 Task 실행 계층의 정식 이름                |
 | ZZW          | ZZWorkflow의 UI·명령어 약어                      |
-| ZZ Knowledge | OMP Memory와 독립된 장기 지식 정책 계층          |
+| ZZ Knowledge | 제거한 legacy memory와 독립된 장기 지식 정책 계층 |
 | Hindsight    | ZZ Knowledge가 감싼 외부 의미 기억 공급자        |
 | Registry     | 현재 ZZW 상태를 저장하는 저장소별 SQLite         |
 | Evidence     | workspace snapshot과 연결된 실행·검증 근거       |
 | Plan DAG     | dependency, validation, lineage를 가진 실행 계획 |
 
-`komp`, `workflowd`, `zz-workflowd`, coordinator, OMP Memory는 현재 제품 이름이나 활성
+`komp`, `workflowd`, `zz-workflowd`, coordinator, 제거한 legacy memory는 현재 제품 이름이나 활성
 아키텍처가 아니다. 역사적 맥락은 [initial-concept-archive.md](initial-concept-archive.md)에만
 보존한다.
 
@@ -140,7 +140,7 @@ tool receipt로 처리하고, 하나의 요청에서 나온 항목은 같은 gro
 
 새 기능은 다음 질문에 답할 수 있어야 한다.
 
-1. 일반 OMP 기능, ZZW, Knowledge 중 어느 계층의 책임인가?
+1. 일반 ZZ 기능, ZZW, Knowledge 중 어느 계층의 책임인가?
 2. 현재 사실인가, 과거 지식인가, 단순 UI projection인가?
 3. 모델의 판단으로 충분한가, 구조화된 tool이 필요한가, runtime 강제가 필요한가?
 4. 기존 Goal과 일반 대화의 자연스러운 흐름을 침범하지 않는가?

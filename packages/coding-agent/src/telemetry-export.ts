@@ -5,7 +5,7 @@
  * spans through the global `@opentelemetry/api` tracer, and exposes run-level
  * callbacks for metrics/log pipelines. This module registers the OTLP/proto
  * trace, log, and metric SDK providers when the standard `OTEL_*` endpoint env
- * vars are set so `omp` can be observed by any OTLP collector without vendor
+ * vars are set so `zz` can be observed by any OTLP collector without vendor
  * coupling.
  *
  * Only the `http/protobuf` transport is supported — an
@@ -44,7 +44,7 @@ import { BatchSpanProcessor } from "@opentelemetry/sdk-trace-base";
 import { NodeTracerProvider } from "@opentelemetry/sdk-trace-node";
 
 /**
- * Periodic flush interval. A long-lived `omp` process (the ACP server is
+ * Periodic flush interval. A long-lived `zz` process (the ACP server is
  * spawned once and reused across many turns) would otherwise hold finished
  * telemetry until a batch window elapses or the process exits.
  */

@@ -74,6 +74,8 @@ function normalizeServerConfig(name: string, config: RawServerConfig): ServerCon
 	const fileTypes =
 		normalizeStringArray(config.fileTypes) ?? normalizeExtensionToFileTypes(config.extensionToLanguage);
 	const rootMarkers = normalizeStringArray(config.rootMarkers) ?? (config.extensionToLanguage ? ["."] : null);
+	const languageId =
+		typeof config.languageId === "string" && config.languageId.length > 0 ? config.languageId : undefined;
 
 	if (!command || !fileTypes || !rootMarkers) {
 		logger.warn("Ignoring invalid LSP server config (missing required fields).", { name });
@@ -95,6 +97,7 @@ function normalizeServerConfig(name: string, config: RawServerConfig): ServerCon
 		args,
 		fileTypes,
 		rootMarkers,
+		languageId,
 		...(initOptions ? { initOptions } : {}),
 	};
 }
@@ -365,7 +368,7 @@ function getConfigSources(cwd: string): ConfigSource[] {
 		sources.push(fileConfigSource(path.join(cwd, filename)));
 	}
 
-	// Project config directories (.omp/, .pi/, .claude/)
+	// Project config directories (.zz/, legacy compatibility dirs, .claude/)
 	const projectDirs = getConfigDirPaths("", { user: false, project: true, cwd });
 	for (const dir of projectDirs) {
 		for (const filename of filenames) {
@@ -373,7 +376,7 @@ function getConfigSources(cwd: string): ConfigSource[] {
 		}
 	}
 
-	// User config directories (~/.omp/agent/, ~/.pi/agent/, ~/.claude/)
+	// User config directories (~/.zz/agent/, legacy compatibility dirs, ~/.claude/)
 	const userDirs = getConfigDirPaths("", { user: true, project: false });
 	for (const dir of userDirs) {
 		for (const filename of filenames) {
@@ -403,8 +406,8 @@ function getConfigSources(cwd: string): ConfigSource[] {
  *
  * Priority (highest to lowest):
  * 1. Project root: lsp.json/.lsp.json/lsp.yml/.lsp.yml/lsp.yaml/.lsp.yaml
- * 2. Project config dirs: .omp/lsp.*, .pi/lsp.*, .claude/lsp.* (+ hidden variants)
- * 3. User config dirs: ~/.omp/agent/lsp.*, ~/.pi/agent/lsp.*, ~/.claude/lsp.* (+ hidden variants)
+ * 2. Project config dirs: .zz/lsp.*, legacy config dirs, .claude/lsp.* (+ hidden variants)
+ * 3. User config dirs: ~/.zz/agent/lsp.*, legacy config dirs, ~/.claude/lsp.* (+ hidden variants)
  * 4. User home root: ~/lsp.*, ~/.lsp.*
  * 5. Auto-detect from project markers + available binaries
  *
@@ -423,6 +426,7 @@ function getConfigSources(cwd: string): ConfigSource[] {
  *       "command": "/path/to/server",
  *       "args": ["--stdio"],
  *       "fileTypes": [".xyz"],
+ *       "languageId": "xyz",
  *       "rootMarkers": [".xyz-project"]
  *     }
  *   }

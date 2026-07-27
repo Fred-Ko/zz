@@ -459,7 +459,10 @@ export async function listSessionFolders(): Promise<string[]> {
 export async function listSessionFiles(folderPath: string): Promise<string[]> {
 	try {
 		const entries = await fs.readdir(folderPath, { recursive: true, withFileTypes: true });
-		return entries.filter(e => e.isFile() && e.name.endsWith(".jsonl")).map(e => path.join(e.parentPath, e.name));
+		return entries
+			.filter(e => e.isFile() && e.name.endsWith(".jsonl"))
+			.map(e => path.join(e.parentPath, e.name))
+			.sort();
 	} catch {
 		return [];
 	}

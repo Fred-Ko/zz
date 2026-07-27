@@ -241,7 +241,7 @@ test("installed plugins under `<plugins>/node_modules/` are surfaced (e.g. via `
 	fs.cpSync(ext, installed, { recursive: true });
 	writeFile(
 		path.join(pluginsDir, "package.json"),
-		JSON.stringify({ name: "omp-plugins", dependencies: { "my-installed-ext": "1.0.0" } }),
+		JSON.stringify({ name: "zz-plugins", dependencies: { "my-installed-ext": "1.0.0" } }),
 	);
 	// Plugin's own package.json must carry an `omp`/`pi` manifest for the
 	// loader to recognise it; the buildExtensionPackage fixture already wrote
@@ -258,7 +258,7 @@ test("project-scoped installed plugins surface project-level sub-discovery", asy
 	fs.mkdirSync(installed, { recursive: true });
 	fs.cpSync(ext, installed, { recursive: true });
 	writeFile(
-		path.join(pluginsDir, "omp-plugins.lock.json"),
+		path.join(pluginsDir, "zz-plugins.lock.json"),
 		JSON.stringify({
 			plugins: { "my-project-ext": { version: "1.0.0", enabled: true, enabledFeatures: null } },
 			settings: {},
@@ -280,10 +280,10 @@ test("disabled installed plugins do not contribute sub-discovery", async () => {
 	fs.cpSync(ext, installed, { recursive: true });
 	writeFile(
 		path.join(pluginsDir, "package.json"),
-		JSON.stringify({ name: "omp-plugins", dependencies: { "my-disabled-ext": "1.0.0" } }),
+		JSON.stringify({ name: "zz-plugins", dependencies: { "my-disabled-ext": "1.0.0" } }),
 	);
 	writeFile(
-		path.join(pluginsDir, "omp-plugins.lock.json"),
+		path.join(pluginsDir, "zz-plugins.lock.json"),
 		JSON.stringify({ plugins: { "my-disabled-ext": { enabled: false } }, settings: {} }),
 	);
 
@@ -306,7 +306,7 @@ test("linked plugins (only in lockfile, not in package.json#dependencies) are su
 	// Intentionally NO `<plugins>/package.json` — matches a fresh `plugin link`
 	// against a setup that has never run `plugin install`.
 	writeFile(
-		path.join(pluginsDir, "omp-plugins.lock.json"),
+		path.join(pluginsDir, "zz-plugins.lock.json"),
 		JSON.stringify({
 			plugins: { "my-linked-ext": { version: "1.0.0", enabled: true, enabledFeatures: null } },
 			settings: {},

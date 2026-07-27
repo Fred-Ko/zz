@@ -1,7 +1,7 @@
 /**
  * Builtin Provider (.zz)
  *
- * Primary provider for OMP native configs. Supports all capabilities.
+ * Primary provider for ZZ native configs. Supports all capabilities.
  */
 import * as path from "node:path";
 import { getAgentDir, logger, parseFrontmatter, tryParseJson } from "@oh-my-pi/pi-utils";
@@ -434,7 +434,7 @@ async function loadRules(ctx: LoadContext): Promise<LoadResult<Rule>> {
 	}
 
 	// Top-level RULES.md is a sticky always-apply rule. Documented in
-	// https://omp.sh/docs/context-files as the file that gets "re-injected near
+	// docs/context-files.md documents this as the file that gets "re-injected near
 	// the current turn so they keep hold across long conversations".
 	// User scope:    ~/.zz/agent/RULES.md
 	// Project scope: nearest .zz/RULES.md walking up from cwd to repoRoot

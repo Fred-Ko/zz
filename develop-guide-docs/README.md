@@ -120,7 +120,7 @@
 - 프롬프트는 TypeScript 문자열이 아니라 정적 Markdown과 Handlebars로 관리한다.
 - 현재 사실은 Git·SQLite Registry·Evidence가 소유한다. 모델 프롬프트나 ZZ Knowledge/Hindsight가 소유하지 않는다.
 - 모든 RDB 저장은 `bun:sqlite`를 우선한다.
-- upstream OMP Memory를 다시 가져오거나 ZZ Knowledge를 그 위에 구축하지 않는다.
+- 제거한 upstream memory를 다시 가져오거나 ZZ Knowledge를 그 위에 구축하지 않는다.
 - 로컬 변경이 있는 상태를 정상 상태로 취급한다. 다른 작업자의 변경을 정리 대상으로 보지 않는다.
 - 구현 후에는 변경 위험에 맞는 계약 수준 테스트와 타입 검사를 실행한다.
 

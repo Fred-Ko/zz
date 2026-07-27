@@ -1,10 +1,10 @@
 /**
- * `omp install <target>` — top-level convenience over `omp plugin install` /
- * `omp plugin link`.
+ * `zz install <target>` — top-level convenience over `zz plugin install` /
+ * `zz plugin link`.
  *
- * The docs (omp.sh/docs/extension-authoring) advertise
+ * The extension authoring documentation advertises
  *
- *   omp install ./my-extension
+ *   zz install ./my-extension
  *
  * as a third loading mechanism that "symlinks the directory into the plugin
  * set and watches it for changes". Before this command existed, `install` was
@@ -25,7 +25,7 @@ import { type PluginAction, type PluginCommandArgs, runPluginCommand } from "../
 import { initTheme } from "../modes/theme/theme";
 
 /**
- * Heuristic used to decide whether `omp install <target>` should `link` a
+ * Heuristic used to decide whether `zz install <target>` should `link` a
  * local directory or `install` a remote spec. Exported for tests.
  */
 export function looksLikeLocalPath(target: string, cwd?: string): boolean {

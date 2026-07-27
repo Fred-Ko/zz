@@ -119,7 +119,7 @@ ZZ는 공개 브랜드를 바꾸지만 upstream 변경을 계속 흡수한다.
 - wire/protocol의 기존 이름
 - hidden worker selector
 - legacy environment variable fallback
-- 이미 릴리스된 changelog의 역사적 OMP 표현
+- 이미 릴리스된 changelog의 역사적 upstream 제품 표현
 
 새 사용자-facing 항목:
 
@@ -153,7 +153,7 @@ bun run release
 
 ## 8. 현재 포크에서 특히 확인할 회귀
 
-- upstream 업데이트가 `zz`를 다시 `omp`로 노출하지 않는가
+- upstream 업데이트가 `zz`를 레거시 실행 이름으로 다시 노출하지 않는가
 - default config root가 `.zz`로 유지되는가
 - `gpt-5.6-sol`, `gpt-5.6-terra` catalog/discovery가 유지되는가
 - 다중 행 상태줄에 모델명이 계속 표시되는가
@@ -162,7 +162,7 @@ bun run release
 - 원본 `/goal`, `/guided-goal`에 ZZW gate가 다시 결합되지 않았는가
 - 내장 ZZW lifecycle/SQLite store가 upstream type·schema 변경을 흡수했는가
 - 별도 `workflowd`나 coordinator 의존성이 다시 생기지 않았는가
-- upstream OMP Memory, Mnemopi, `memory://`, transcript auto-retain이 재유입되지 않았는가
+- 제거한 upstream memory, Mnemopi, `memory://`, transcript auto-retain이 재유입되지 않았는가
 - ZZ Knowledge가 독립 wrapper와 Global/Repository Bank 경계를 유지하는가
 - Hindsight가 authoritative state처럼 주입되지 않는가
 - `zz --smoke-test`가 worker와 tiny subprocess를 통과하는가

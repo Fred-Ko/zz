@@ -25,7 +25,7 @@ import packageJson from "../../package.json" with { type: "json" };
 import { isAuthenticated, type ModelRegistry } from "../config/model-registry";
 import { settings } from "../config/settings";
 import type { CustomTool } from "../extensibility/custom-tools/types";
-import { ohMyPiXAIUserAgent, resolveXAIHttpCredentials } from "../lib/xai-http";
+import { resolveXAIHttpCredentials, zzXAIUserAgent } from "../lib/xai-http";
 import imageGenDescription from "../prompts/tools/image-gen.md" with { type: "text" };
 import { AUTO_IMAGE_PROVIDER_ORDER, type ImageProvider, isImageProviderId } from "./image-providers";
 import { resolveReadPath } from "./path-utils";
@@ -1389,7 +1389,7 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 									headers: {
 										Authorization: `Bearer ${key}`,
 										"Content-Type": "application/json",
-										"User-Agent": ohMyPiXAIUserAgent(),
+										"User-Agent": zzXAIUserAgent(),
 									},
 									body: JSON.stringify(xaiBody),
 									signal: requestSignal,
@@ -1479,7 +1479,7 @@ export const imageGenTool: CustomTool<typeof imageGenSchema, ImageGenToolDetails
 									headers: {
 										"Content-Type": "application/json",
 										Authorization: `Bearer ${key}`,
-										"HTTP-Referer": "https://omp.sh/",
+										"HTTP-Referer": "https://github.com/Fred-Ko/zz",
 										"X-OpenRouter-Title": "Oh-My-Pi",
 										"X-OpenRouter-Categories": "cli-agent",
 									},

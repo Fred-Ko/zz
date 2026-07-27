@@ -799,9 +799,9 @@ export function parseClaudePluginsRegistry(content: string): ClaudePluginsRegist
  * Resolve the active project registry path by walking up from `cwd`.
  *
  * Walk order:
- * 1. Walk up from `cwd` looking for the nearest directory containing `.omp/`.
+ * 1. Walk up from `cwd` looking for the nearest directory containing `.zz/`.
  *    The first match returns `<dir>/.zz/plugins/installed_plugins.json`.
- * 2. If no `.omp/` is found, rescan from `cwd` upward looking for `.git`.
+ * 2. If no `.zz/` is found, rescan from `cwd` upward looking for `.git`.
  *    The git root is used as an anchor: `<gitRoot>/.zz/plugins/installed_plugins.json`.
  * 3. If neither is found, return `null` — no project context is active.
  *
@@ -809,8 +809,8 @@ export function parseClaudePluginsRegistry(content: string): ClaudePluginsRegist
  * uninstall, list, upgrade, discovery, and doctor. Deterministic for a given `cwd`.
  */
 export async function resolveActiveProjectRegistryPath(cwd: string): Promise<string | null> {
-	// Pass 1: walk up looking for an existing .omp/ directory (nearest wins).
-	// Stop before os.homedir() — ~/.omp/ is the user-level config dir, not a project root.
+	// Pass 1: walk up looking for an existing .zz/ directory (nearest wins).
+	// Stop before os.homedir() — ~/.zz/ is the user-level config dir, not a project root.
 	const homeDir = os.homedir();
 	let dir = path.resolve(cwd);
 	while (dir !== homeDir) {
@@ -846,10 +846,10 @@ export async function resolveActiveProjectRegistryPath(cwd: string): Promise<str
 
 /**
  * Like resolveActiveProjectRegistryPath, but falls back to `<cwd>/.zz/plugins/installed_plugins.json`
- * when no project anchor (.omp/ or .git/) is found.
+ * when no project anchor (.zz/ or .git/) is found.
  *
  * Use this when the caller accepts an explicit --scope project so that installing into a freshly
- * bootstrapped directory (no .omp/ or .git/ yet) works: writeInstalledPluginsRegistry auto-creates
+ * bootstrapped directory (no .zz/ or .git/ yet) works: writeInstalledPluginsRegistry auto-creates
  * the directory tree on first write.
  *
  * Returns undefined when cwd is os.homedir() — that path is already the user registry and must
@@ -958,8 +958,8 @@ export async function listClaudePluginRoots(
 		}
 	}
 
-	// ── OMP installed plugins registry ───────────────────────────────────────
-	// OMP registry is authoritative: its entries replace Claude's entries for the same plugin ID.
+	// ── ZZ installed plugins registry ────────────────────────────────────────
+	// ZZ registry is authoritative: its entries replace Claude's entries for the same plugin ID.
 	// In production `home` is `os.homedir()`, so `getPluginsDir(home)` resolves to the
 	// same XDG-aware path the marketplace writer uses (reads and writes always agree).
 	// Tests pass a temp dir, which short-circuits the resolver for deterministic isolation.
@@ -979,7 +979,7 @@ export async function listClaudePluginRoots(
 				const pluginName = pluginId.slice(0, atIndex);
 				const marketplace = pluginId.slice(atIndex + 1);
 
-				// OMP is authoritative: drop all Claude-sourced entries for this plugin ID
+				// ZZ is authoritative: drop all Claude-sourced entries for this plugin ID
 				const filtered = roots.filter(r => r.id !== pluginId);
 				roots.length = 0;
 				roots.push(...filtered);
@@ -1004,11 +1004,11 @@ export async function listClaudePluginRoots(
 				}
 			}
 		} else {
-			warnings.push(`Failed to parse OMP plugin registry: ${ompRegistryPath}`);
+			warnings.push(`Failed to parse ZZ plugin registry: ${ompRegistryPath}`);
 		}
 	}
 
-	// ── Project-scoped OMP registry ────────────────────────────────────────
+	// ── Project-scoped ZZ registry ─────────────────────────────────────────
 	// Loaded from the nearest .zz/plugins/installed_plugins.json relative to cwd.
 	// Project entries take precedence over user entries for the same plugin ID.
 	if (resolvedProjectPath) {
@@ -1124,7 +1124,7 @@ export function getPreloadedPluginRoots(): readonly ClaudePluginRoot[] {
 
 /**
  * Inject synthetic plugin roots from --plugin-dir paths.
- * These are prepended to the cache with highest precedence (before OMP/Claude entries).
+ * These are prepended to the cache with highest precedence (before ZZ/Claude entries).
  * Must be called before any listClaudePluginRoots() access.
  */
 export async function injectPluginDirRoots(home: string, dirs: string[], cwd?: string): Promise<void> {

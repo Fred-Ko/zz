@@ -12,7 +12,7 @@
 - `대체됨`: 아래의 다른 결정으로 교체됨
 - `보류`: 현재 구현하지 않으며 필요하면 새 근거로 재검토
 
-## D-001 — OMP fork 위에 ZZ 공개 정체성을 둔다
+## D-001 — upstream fork 위에 ZZ 공개 정체성을 둔다
 
 - 상태: 채택
 - 결정: 공개 이름, CLI, 설정 경로, 프로젝트 자산은 `ZZ`, `zz`, `~/.zz`, `.zz/`를 사용한다.
@@ -93,7 +93,7 @@
   현재 workspace snapshot의 trusted evidence에 매핑돼야 한다.
 - 근거: 실행 후 파일이 바뀌거나 validator가 다른 명령이면 과거 성공은 현재 완료 근거가 아니다.
 
-## D-011 — upstream OMP Memory를 전부 제거한다
+## D-011 — upstream legacy memory를 전부 제거한다
 
 - 상태: 채택
 - 제거 범위: Mnemopi, transcript auto-retain/auto-recall, `memory://`, `/memory`, legacy memory

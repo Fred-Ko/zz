@@ -707,7 +707,7 @@ export interface DefaultPackageManagerOptions {
 }
 
 /**
- * Enumerates the extensions OMP would load through the historical package
+ * Enumerates the extensions ZZ would load through the historical package
  * manager surface used by legacy extensions.
  */
 export class DefaultPackageManager {
@@ -721,7 +721,7 @@ export class DefaultPackageManager {
 		this.#settingsManager = options.settingsManager;
 	}
 
-	/** Resolve enabled extension paths with their OMP plugin provenance. */
+	/** Resolve enabled extension paths with their ZZ plugin provenance. */
 	async resolve(_onMissing?: (source: string) => Promise<MissingSourceAction>): Promise<ResolvedPaths> {
 		const settings = await this.#settingsManager;
 		const configuredPaths = settings.get("extensions") ?? [];
@@ -775,18 +775,18 @@ export class DefaultPackageManager {
  * import the class at module scope; a missing export takes the whole
  * extension down at parse time (issue #4567).
  *
- * OMP does the same discovery inline inside `createAgentSession()`, so this
+ * ZZ does the same discovery inline inside `createAgentSession()`, so this
  * shim intentionally does NOT re-implement pi's ResourceLoader plumbing.
  * Instead the loader captures the caller's intent (`no*` flags, `*Override`
  * callbacks, `additional*Paths`, `extensionFactories`, `settingsManager`,
  * `eventBus`) plus the discovery results, and the sibling `createAgentSession`
- * override below translates them into OMP's native session options
+ * override below translates them into ZZ's native session options
  * (`disableExtensionDiscovery`, `preloadedExtensionPaths`, `extensions`,
  * `skills`, `promptTemplates`, `contextFiles`, `settings`, `eventBus`,
  * `systemPrompt`) before delegating to `../sdk`.
  *
  * The pi surface it emulates is the intersection actually used by real
- * extensions in the wild — themes are silently dropped (OMP has no
+ * extensions in the wild — themes are silently dropped (ZZ has no
  * session-level themes surface); `extendResources`, `loadProjectTrustExtensions`,
  * and provider-trust hooks are omitted.
  */
@@ -861,6 +861,11 @@ export interface ResourceLoader {
 	readonly __ompLegacyPiLoader?: true;
 }
 
+/** Create a pre-initialization runtime for legacy extension resource loaders. */
+export function createExtensionRuntime(): ExtensionRuntime {
+	return new ExtensionRuntime();
+}
+
 /**
  * Loader-owned inputs that {@link createAgentSession} needs regardless of
  * whether the caller provided extra options. `cwd`/`agentDir` fall back to
@@ -894,7 +899,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 	readonly __ompLegacyPiLoader = true as const;
 	#state: ResolvedLoaderState;
 	#options: DefaultResourceLoaderOptions;
-	#extensionsResult: LoadExtensionsResult = { extensions: [], errors: [], runtime: new ExtensionRuntime() };
+	#extensionsResult: LoadExtensionsResult = { extensions: [], errors: [], runtime: createExtensionRuntime() };
 	#skills: Skill[] = [];
 	#skillDiagnostics: ResourceDiagnostic[] = [];
 	#prompts: PromptTemplate[] = [];
@@ -1043,7 +1048,7 @@ export class DefaultResourceLoader implements ResourceLoader {
 		const { cwd, noExtensions, additionalExtensionPaths, extensionFactories, eventBus } = this.#state;
 
 		if (noExtensions && additionalExtensionPaths.length === 0 && extensionFactories.length === 0) {
-			return { extensions: [], errors: [], runtime: new ExtensionRuntime() };
+			return { extensions: [], errors: [], runtime: createExtensionRuntime() };
 		}
 
 		const paths = await discoverSessionExtensionPaths(
@@ -1211,15 +1216,15 @@ export class DefaultResourceLoader implements ResourceLoader {
 }
 
 /**
- * Legacy pi extensions call `createAgentSession({ resourceLoader })`. OMP's
+ * Legacy pi extensions call `createAgentSession({ resourceLoader })`. ZZ's
  * native option surface has no such field — extension / skill / prompt /
  * context-file discovery are configured directly on the session options — so
  * an untranslated call would silently ignore the loader (including its
- * `noExtensions`/`noSkills` opt-outs), re-run OMP's own discovery, and
+ * `noExtensions`/`noSkills` opt-outs), re-run ZZ's own discovery, and
  * happily re-load the calling extension into the subagent. That's exactly
  * the recursion the caller passed the loader to prevent.
  *
- * Translate the loader's captured state into OMP's option fields, then
+ * Translate the loader's captured state into ZZ's option fields, then
  * delegate to the underlying SDK. Explicit fields on `options` override the
  * loader (matches upstream pi semantics — a caller can partially override a
  * shared loader).
@@ -1305,7 +1310,7 @@ export async function createAgentSession(
 /**
  * Synchronous auth storage surface retained for legacy extensions.
  *
- * Modern OMP auth storage is asynchronous, while older provider extensions
+ * Modern ZZ auth storage is asynchronous, while older provider extensions
  * call `AuthStorage.create().get()` during module initialization.
  */
 export class AuthStorage {
@@ -1365,6 +1370,13 @@ export { getProjectDir } from "@oh-my-pi/pi-utils";
 export function getPackageDir(): string {
 	return getOmpPackageDir() ?? (isCompiledBinary() ? path.dirname(process.execPath) : process.cwd());
 }
+
+// Legacy pi's `@earendil-works/pi-coding-agent` re-exported `estimateTokens`
+// from its package root (via `./core/compaction/index.ts`). In omp it lives in
+// `@oh-my-pi/pi-agent-core/compaction`, and the coding-agent barrel below does
+// not forward it, so legacy extensions importing it fail Bun's static export
+// check during validation (issue #6583).
+export { estimateTokens } from "@oh-my-pi/pi-agent-core/compaction";
 
 export * from "../index";
 export { formatBytes as formatSize } from "../tools/render-utils";

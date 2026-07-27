@@ -3,7 +3,7 @@
 The compiled macOS `zz` binaries shipped on GitHub Releases are signed with a
 **Developer ID Application** certificate and **notarized** by Apple. This makes
 them Gatekeeper-acceptable and is the prerequisite for an official Homebrew
-submission (see [#776](https://github.com/can1357/oh-my-pi/issues/776)).
+submission (see [#776](https://github.com/Fred-Ko/zz/issues/776)).
 
 Signing happens in CI, in the `release_binary` job's darwin matrix legs
 (`.github/workflows/ci.yml`), via `scripts/ci-macos-sign.sh`. It **auto-skips**

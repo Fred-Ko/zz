@@ -11,7 +11,7 @@
 
 import { $ } from "bun";
 
-const REPO = process.env.ZZ_REPO ?? process.env.OMP_REPO ?? "can1357/oh-my-pi";
+const REPO = process.env.ZZ_REPO ?? process.env.OMP_REPO ?? "Fred-Ko/zz";
 const HOMEPAGE = `https://github.com/${REPO}`;
 const DESC = "Coding agent with the IDE wired in";
 

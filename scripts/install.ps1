@@ -1,12 +1,12 @@
 # ZZ Coding Agent Installer for Windows
-# Usage: irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1 | iex
+# Usage: irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1 | iex
 #
 # Or with options:
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Binary
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source -Ref v3.20.1
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Source -Ref main
-#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/can1357/oh-my-pi/main/scripts/install.ps1))) -Binary -Ref v3.20.1
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1))) -Source
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1))) -Binary
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1))) -Source -Ref v3.20.1
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1))) -Source -Ref main
+#   & ([scriptblock]::Create((irm https://raw.githubusercontent.com/Fred-Ko/zz/main/scripts/install.ps1))) -Binary -Ref v3.20.1
 
 param(
     [switch]$Source,
@@ -16,7 +16,7 @@ param(
 
 $ErrorActionPreference = "Stop"
 
-$Repo = "can1357/oh-my-pi"
+$Repo = "Fred-Ko/zz"
 $Package = "@oh-my-pi/pi-coding-agent"
 $InstallDir = if ($env:PI_INSTALL_DIR) { $env:PI_INSTALL_DIR } else { "$env:LOCALAPPDATA\zz" }
 $BinaryName = "zz-windows-x64.exe"
@@ -146,14 +146,12 @@ function Configure-BashShell {
             Write-Host "✓ Configured shell path in $settingsFile" -ForegroundColor Green
         } else {
             Write-Host ""
-            Write-Host "⚠ No bash shell found!" -ForegroundColor Yellow
-            Write-Host "  ZZ requires a bash shell on Windows. Options:" -ForegroundColor Yellow
-            Write-Host "    1. Install Git for Windows: https://git-scm.com/download/win" -ForegroundColor Yellow
-            Write-Host "    2. Use WSL, Cygwin, or MSYS2" -ForegroundColor Yellow
-            Write-Host ""
-            Write-Host "  After installing, you can set a custom path in:" -ForegroundColor Yellow
-            Write-Host "    $settingsFile" -ForegroundColor Yellow
-            Write-Host '    { "shellPath": "C:\\path\\to\\bash.exe" }' -ForegroundColor Yellow
+            Write-Host "No bash shell found - ZZ will use its built-in shell." -ForegroundColor Cyan
+			Write-Host "  For shell snapshots and interactive terminals, install Git for Windows:" -ForegroundColor Cyan
+            Write-Host "    https://git-scm.com/download/win" -ForegroundColor Cyan
+            Write-Host "  Or set a custom path in:" -ForegroundColor Cyan
+			Write-Host "    $settingsFile" -ForegroundColor Cyan
+			Write-Host '    { "shellPath": "C:\\path\\to\\bash.exe" }' -ForegroundColor Cyan
         }
     } catch {
         Write-Host "⚠ Could not configure bash shell: $_" -ForegroundColor Yellow

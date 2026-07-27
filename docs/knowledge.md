@@ -1,6 +1,6 @@
 # ZZ Knowledge System
 
-ZZ Knowledge는 upstream OMP Memory와 코드·설정·DB·도구가 완전히 분리된 장기 지식 계층이다. 제거된 local memory, Mnemopi, transcript auto-retain/auto-recall, `memory://`, `/memory`와 기존 memory tool을 사용하거나 호환 계층으로 되살리지 않는다.
+ZZ Knowledge는 제거한 upstream memory와 코드·설정·DB·도구가 완전히 분리된 장기 지식 계층이다. 제거된 local memory, Mnemopi, transcript auto-retain/auto-recall, `memory://`, `/memory`와 기존 memory tool을 사용하거나 호환 계층으로 되살리지 않는다.
 
 Hindsight는 ZZ가 정책을 적용해 사용하는 advisory semantic store다. 현재 HEAD, diff, Task, Plan, operation, lease와 검증 결과의 원본은 Git 및 Workflow Registry다.
 

@@ -7,6 +7,8 @@ import {
 	getActiveProfile,
 	getConfigDirName,
 	getDocumentConversionCacheDir,
+	getPluginsLockfileAtRoot,
+	getPluginsLockfileForReadAtRoot,
 	getProfileRootDir,
 	setAgentDir,
 } from "@oh-my-pi/pi-utils/dirs";
@@ -100,5 +102,30 @@ describe("test directory state cleanup", () => {
 			restoreEnv("XDG_CACHE_HOME", originalXdgCacheHome);
 			__resetDirsFromEnvForTests();
 		}
+	});
+});
+
+describe("plugin lock file naming", () => {
+	let tempRoot = "";
+
+	beforeEach(async () => {
+		tempRoot = path.join(os.tmpdir(), "zz-plugin-lock", Snowflake.next());
+		await fs.mkdir(tempRoot, { recursive: true });
+	});
+
+	afterEach(async () => {
+		await fs.rm(tempRoot, { recursive: true, force: true });
+	});
+
+	it("writes the ZZ filename while accepting the previous filename only as a read fallback", async () => {
+		const canonical = path.join(tempRoot, "zz-plugins.lock.json");
+		const legacy = path.join(tempRoot, "omp-plugins.lock.json");
+		await Bun.write(legacy, "{}");
+
+		expect(getPluginsLockfileAtRoot(tempRoot)).toBe(canonical);
+		expect(getPluginsLockfileForReadAtRoot(tempRoot)).toBe(legacy);
+
+		await Bun.write(canonical, "{}");
+		expect(getPluginsLockfileForReadAtRoot(tempRoot)).toBe(canonical);
 	});
 });

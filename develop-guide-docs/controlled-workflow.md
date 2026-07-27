@@ -104,7 +104,7 @@ resume/recovery test를 함께 갱신한다.
 
 ## 6. 진화하는 Plan DAG
 
-Plan DAG는 OMP Todo에서 가져오지 않는다. `zzw_propose_plan` 또는 `zzw_patch_plan`이 만든 Registry 상태가 권위 있으며, Todo는 현재 Plan을 TUI에 보여 주는 읽기 전용 projection이다. ZZWorkflow가 활성화된 동안에만 Todo mutation은 거부된다. 원본 Goal의 Todo는 기존 동작을 유지한다.
+Plan DAG는 기본 Todo에서 가져오지 않는다. `zzw_propose_plan` 또는 `zzw_patch_plan`이 만든 Registry 상태가 권위 있으며, Todo는 현재 Plan을 TUI에 보여 주는 읽기 전용 projection이다. ZZWorkflow가 활성화된 동안에만 Todo mutation은 거부된다. 원본 Goal의 Todo는 기존 동작을 유지한다.
 
 최초 실행 Plan은 항상 `draft`이며 모델은 자신의 제안을 승인할 수 없다. 사용자가 `/zzw approve-plan`을 실행한 뒤에만 side effect가 허용된다. 이후 Plan은 실행 중 발견에 따라 버전이 증가하며, 각 step에는 최초 버전, 최근 계약 변경 버전, 계약 hash, parent, supersedes/supersededBy, assumption, 입력·출력 artifact가 남는다. 교체·무효화된 노드는 삭제하지 않고 lineage로 보존한다.
 
@@ -266,7 +266,7 @@ knowledge:
 
 이 계층에서는:
 
-- upstream OMP Memory와 임의 transcript auto-retain을 사용하지 않는다.
+- 제거된 upstream memory와 임의 transcript auto-retain을 사용하지 않는다.
 - intake/planning/replanning/recovery 경계에서 목적별 recall을 한다.
 - 일반 세션 시작에는 작은 orientation working set만 자동 조회한다.
 - 모델에 raw bank/tag 선택권과 raw retain/delete 권한을 주지 않는다.

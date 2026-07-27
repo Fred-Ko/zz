@@ -6,7 +6,7 @@
 
 ## 1. 비호환 경계
 
-ZZ Knowledge는 upstream OMP Memory를 확장하지 않는다. Mnemopi, 기존 memory backend, transcript retain/recall, `memory://`, `/memory`, legacy tool/prompt/setting을 import하거나 compatibility wrapper로 되살리는 변경은 금지한다.
+ZZ Knowledge는 제거한 upstream memory를 확장하지 않는다. Mnemopi, 기존 memory backend, transcript retain/recall, `memory://`, `/memory`, legacy tool/prompt/setting을 import하거나 compatibility wrapper로 되살리는 변경은 금지한다.
 
 ```text
 Authoritative current-state plane    Advisory Knowledge plane

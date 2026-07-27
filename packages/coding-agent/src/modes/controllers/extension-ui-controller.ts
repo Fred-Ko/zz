@@ -86,7 +86,7 @@ export class ExtensionUiController {
 		const uiContext: ExtensionUIContext = {
 			timeoutStartsOnPresentation: true,
 			select: (title, options, dialogOptions) => this.showCollabAwareSelector(title, options, dialogOptions),
-			confirm: (title, message, _dialogOptions) => this.showHookConfirm(title, message),
+			confirm: (title, message, dialogOptions) => this.showHookConfirm(title, message, dialogOptions),
 			input: (title, placeholder, dialogOptions) => this.showHookInput(title, placeholder, dialogOptions),
 			askDialog: (questions, dialogOptions) => this.showAskDialog(questions, dialogOptions),
 			notify: (message, type) => this.showHookNotify(message, type),
@@ -624,11 +624,30 @@ export class ExtensionUiController {
 			let promptEditor: HookEditorComponent | undefined;
 			let promptResolve: ((value: string | undefined) => void) | undefined;
 			let closed = false;
+			const draftEditor = this.ctx.editor;
+			const inputGuard =
+				draftEditor.getText().length > 0
+					? {
+							isBlocked: () => draftEditor.getText().length > 0,
+							handleInput: (keyData: string) => draftEditor.handleDraftEdit(keyData),
+							hint: "Finish or clear the current prompt to answer",
+							// Show the draft's insertion cursor while it owns input; drop it
+							// once the draft clears and the ask controls take over.
+							syncPresentation: () => {
+								draftEditor.focused = draftEditor.getText().length > 0;
+							},
+						}
+					: undefined;
 
 			const restoreAskDialog = (): void => {
 				if (closed || !askDialog) return;
 				this.ctx.editorContainer.clear();
 				this.ctx.editorContainer.addChild(askDialog);
+				// Keep the draft editor mounted beneath the restored ask, matching the
+				// initial presentation: the guard re-blocks whenever the draft is
+				// non-empty (e.g. a failed submit restored its text while a nested
+				// prompt was open), and routed input must land on a visible surface.
+				if (inputGuard) this.ctx.editorContainer.addChild(this.ctx.editor);
 				this.ctx.ui.setFocus(askDialog);
 				this.ctx.ui.requestRender();
 			};
@@ -671,10 +690,12 @@ export class ExtensionUiController {
 					timeout: dialogOptions?.timeout,
 					onTimeout: dialogOptions?.onTimeout,
 					tui: this.ctx.ui,
+					inputGuard,
 				},
 			);
 			this.ctx.editorContainer.clear();
 			this.ctx.editorContainer.addChild(askDialog);
+			if (inputGuard) this.ctx.editorContainer.addChild(this.ctx.editor);
 			this.ctx.ui.setFocus(askDialog);
 			this.ctx.ui.requestRender();
 
@@ -922,8 +943,8 @@ export class ExtensionUiController {
 	/**
 	 * Show a confirmation dialog for hooks.
 	 */
-	async showHookConfirm(title: string, message: string): Promise<boolean> {
-		const result = await this.showHookSelector(`${title}\n${message}`, ["Yes", "No"]);
+	async showHookConfirm(title: string, message: string, dialogOptions?: ExtensionUIDialogOptions): Promise<boolean> {
+		const result = await this.showHookSelector(`${title}\n${message}`, ["Yes", "No"], dialogOptions);
 		return result === "Yes";
 	}
 

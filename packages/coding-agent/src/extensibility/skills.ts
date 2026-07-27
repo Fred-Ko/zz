@@ -148,7 +148,7 @@ export async function loadSkills(options: LoadSkillsOptions = {}): Promise<LoadS
 	// Fall-through gate for third-party CLI providers (claude-plugins, opencode,
 	// gemini, github, ...) that share user intent with the named third-party
 	// source toggles but don't have a dedicated control of their own. Only the
-	// third-party toggles count here: the OMP-native providers (`agents`,
+	// third-party toggles count here: the ZZ-native providers (`agents`,
 	// `native`) get explicit branches in `isSourceEnabled` below, so folding
 	// them into the fallback would re-enable unrelated third-party CLIs whenever
 	// the user kept the default `.agent[s]/skills` toggles on while turning off

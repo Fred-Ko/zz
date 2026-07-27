@@ -6,7 +6,7 @@ import { buildResult, loadPage, type RenderResult, type SpecialHandler } from ".
 
 const NCBI_HEADERS = {
 	Accept: "application/json, text/plain;q=0.9, */*;q=0.8",
-	"User-Agent": "CodingAgent/1.0 (web scraper)",
+	"User-Agent": "zz/1.0 (web scraper)",
 };
 
 /**

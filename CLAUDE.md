@@ -10,7 +10,7 @@
 - Korean is the default language for user-facing conversation and built-in messages unless the user explicitly selects another language. Code identifiers, protocol fields, and upstream API names remain in their established language.
 - Relational persistence added by this fork uses `bun:sqlite`. Do not introduce PostgreSQL or another RDBMS unless the user explicitly changes this architecture.
 - Automatic QA reporting was removed. Do not reintroduce `report_tool_issue`, `xd://report_issue`, grievance storage/push, consent UI, or equivalent model-driven telemetry.
-- Upstream OMP Memory, Mnemopi, transcript auto-retain/auto-recall, `memory://`, `/memory`, and the legacy memory tools are removed. Do not reintroduce or build ZZ Knowledge on top of them.
+- The upstream legacy memory subsystem, Mnemopi, transcript auto-retain/auto-recall, `memory://`, `/memory`, and the legacy memory tools are removed. Do not reintroduce or build ZZ Knowledge on top of them.
 - ZZ Knowledge is an independent policy layer under `packages/coding-agent/src/knowledge/`. Hindsight is only its advisory semantic store. Registry, Git, workspace state, operation journal, and verification evidence remain authoritative.
 
 ## Development Guide Map
@@ -37,7 +37,7 @@ Historical source:
 
 - Keep current developer architecture, concepts, decisions, and internal procedures under `develop-guide-docs/`. Keep user-facing command and configuration reference under `docs/`, and package-specific public API guidance in the relevant `packages/*/README.md`.
 - Every current guide must state its authority/status near the top. Historical documents must be explicitly marked non-authoritative and link to the current replacement documents.
-- Treat `initial-concept-archive.md` as a preserved historical record. Do not rewrite its original proposals to match the current implementation, and do not revive its discarded `workflowd`, multi-machine coordinator, or OMP Memory assumptions by citing the archive. Add current decisions to `architecture-decisions.md` and the relevant subsystem guide instead.
+- Treat `initial-concept-archive.md` as a preserved historical record. Do not rewrite its original proposals to match the current implementation, and do not revive its discarded `workflowd`, multi-machine coordinator, or legacy memory assumptions by citing the archive. Add current decisions to `architecture-decisions.md` and the relevant subsystem guide instead.
 - When code changes product identity, user flow, commands, settings, package boundaries, persistence paths, state transitions, approval behavior, Knowledge policy, installation, or release behavior, update the owning current guide in the same change.
 - Update `project-identity.md` for mission/non-goal changes, `design-philosophy.md` for cross-cutting principles, `product-workflows.md` for user journeys, `architecture.md` for runtime/package boundaries, and `architecture-decisions.md` for accepted/replaced/deferred decisions.
 - Update `controlled-workflow.md` for ZZW contracts and `knowledge-system.md` for ZZ Knowledge contracts. Keep those systems independent: ZZW owns current task execution state; Knowledge owns advisory durable knowledge policy.
@@ -108,7 +108,7 @@ Unless user tells you exactly what to write:
         type: "module",
       });
   ```
-  When the process was started from the ZZ CLI — source `cli.ts`, npm-bundle `dist/cli.js`, or compiled binary — `workerHostEntry()` is `Bun.main` and the worker re-enters the single entry module, so no per-worker `--compile` entrypoints or bundle entries exist. Outside a CLI host (`bun test`, SDK embedding, standalone `omp-stats`) it returns `null` and the direct-module fallback loads the worker source. New worker kinds MUST add their selector to the dispatch table in `cli.ts` and keep the fallback branch.
+  When the process was started from the ZZ CLI — source `cli.ts`, npm-bundle `dist/cli.js`, or compiled binary — `workerHostEntry()` is `Bun.main` and the worker re-enters the single entry module, so no per-worker `--compile` entrypoints or bundle entries exist. Outside a CLI host (`bun test`, SDK embedding, standalone stats tooling) it returns `null` and the direct-module fallback loads the worker source. New worker kinds MUST add their selector to the dispatch table in `cli.ts` and keep the fallback branch.
   History: `with { type: "file" }` only copied the entry as a raw asset (workers crashed silently in compiled binaries — issues #1011, #1027), and the later literal-path + extra-entrypoint pattern required keeping spawn literals and two build scripts in sync (issue #1150). The smoke probe below is the live validation of this contract.
   Validate any new worker with the dedicated smoke probe: `zz --smoke-test` spawns the stats sync worker and the tiny-model subprocess, pings them, and exits — it's wired into `ci:test:smoke` and `scripts/install-tests/run-ci.sh` so binary, source-link, and tarball installs all exercise it. Add a sibling smoke if the new worker is on a different module graph.
 
@@ -244,9 +244,9 @@ To change an entry, fix the source:
 
 Regenerate with `bun run gen:models` and commit `models.json` alongside the source change. Add a regression test against the **resolver/descriptor**, not the bundled JSON, so it survives upstream metadata shifts.
 
-## Logging
+## Logging and CLI Output
 
-**NEVER use `console.log`/`error`/`warn`** in the coding-agent package — it corrupts TUI rendering. Use the centralized logger:
+Code that may run while the TUI, RPC, SDK, workers, or background runtimes are active MUST NOT use `console.log`/`error`/`warn`; it corrupts rendering or protocols. Use the centralized logger:
 
 ```typescript
 import { logger } from "@oh-my-pi/pi-utils";
@@ -256,7 +256,7 @@ logger.warn("Theme file invalid, using fallback", { path });
 logger.debug("LSP fallback triggered", { reason });
 ```
 
-Logs go to `~/.zz/logs/zz.YYYY-MM-DD.PID.log` with automatic rotation.
+Logs go to `~/.zz/logs/zz.YYYY-MM-DD.PID.log` with automatic rotation. Standalone CLI commands that exit without entering the TUI MAY use `console.*` or process streams for intentional user-facing output. Keep structured stdout clean. This exception is semantic, not filename-based; shared code must use `logger` or an explicit output sink.
 
 ## TUI Sanitization
 

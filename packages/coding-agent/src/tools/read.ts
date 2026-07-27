@@ -2249,12 +2249,12 @@ export class ReadTool implements AgentTool<typeof readSchema, ReadToolDetails> {
 			return executeReadUrl(this.session, { path: parsedUrlTarget.path, raw: urlRaw }, signal);
 		}
 
-		// Handle internal URLs (agent://, artifact://, skill://, rule://, local://, mcp://, omp://, issue://, pr://).
+		// Handle native ZZ URLs, legacy-compatible internal URLs, and custom-scheme resources advertised by MCP servers.
 		// Use the internal-URL-aware splitter so malformed selectors are peeled
 		// off the URL and surfaced via parseSel rather than confusing handlers.
 		const internalRouter = InternalUrlRouter.instance();
 		let promotedSelector: string | undefined;
-		if (internalRouter.canHandle(readPath)) {
+		if (internalRouter.canResolve(readPath)) {
 			const internalTarget = splitInternalUrlSel(readPath);
 			const parsed = parseSel(internalTarget.sel);
 			if (internalTarget.sel !== undefined && parsed.kind === "none") {

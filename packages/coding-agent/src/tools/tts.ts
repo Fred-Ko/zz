@@ -9,7 +9,7 @@ import { ProviderHttpError } from "@oh-my-pi/pi-ai/error";
 import { type } from "arktype";
 import { settings } from "../config/settings";
 import type { CustomTool, CustomToolContext } from "../extensibility/custom-tools/types";
-import { ohMyPiXAIUserAgent, resolveXAIHttpCredentials } from "../lib/xai-http";
+import { resolveXAIHttpCredentials, zzXAIUserAgent } from "../lib/xai-http";
 import { DEFAULT_TTS_LOCAL_MODEL_KEY, DEFAULT_TTS_VOICE, isTtsLocalModelKey, KOKORO_VOICES } from "../tts/models";
 import { ttsClient } from "../tts/tts-client";
 import { encodeWav } from "../tts/wav";
@@ -150,7 +150,7 @@ async function synthesizeXai(
 					headers: {
 						Authorization: `Bearer ${key}`,
 						"Content-Type": "application/json",
-						"User-Agent": ohMyPiXAIUserAgent(),
+						"User-Agent": zzXAIUserAgent(),
 					},
 					body: JSON.stringify(payload),
 					signal: combinedSignal,

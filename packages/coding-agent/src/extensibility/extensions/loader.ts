@@ -512,7 +512,7 @@ async function discoverExtensionsInDir(dir: string): Promise<string[]> {
 /**
  * Discover absolute paths of extensions to load, without importing or
  * binding factories. Hot path on session startup — the scan walks native
- * `.omp`/`.pi` extension capabilities, JS/TS hook factories, the
+ * canonical `.zz` and compatibility `.omp`/`.pi` extension capabilities, JS/TS hook factories, the
  * installed-plugin tree, and any configured paths.
  *
  * Subagents reuse the parent's collected paths via the SDK's
@@ -549,7 +549,7 @@ export async function discoverExtensionPaths(
 		}
 	};
 
-	// 1. Discover extension modules via capability API (native .omp/.pi only).
+	// 1. Discover extension modules via capability API (canonical .zz plus compatibility locations).
 	// Scope the load to the native provider — the extension-module capability
 	// also has claude/codex/gemini/opencode providers, and their items were
 	// discarded here anyway (see #4198). The provider filter skips the walk

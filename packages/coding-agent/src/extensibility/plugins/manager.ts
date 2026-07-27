@@ -4,6 +4,7 @@ import * as path from "node:path";
 import {
 	getPluginsDir,
 	getPluginsLockfile,
+	getPluginsLockfileForReadAtRoot,
 	getPluginsNodeModules,
 	getPluginsPackageJson,
 	getProjectDir,
@@ -130,7 +131,8 @@ export class PluginManager {
 	// ==========================================================================
 
 	async #loadRuntimeConfig(): Promise<PluginRuntimeConfig> {
-		const lockPath = getPluginsLockfile();
+		const canonicalLockPath = getPluginsLockfile();
+		const lockPath = getPluginsLockfileForReadAtRoot(path.dirname(canonicalLockPath));
 		try {
 			return normalizePluginRuntimeConfig(await Bun.file(lockPath).json());
 		} catch (err) {
@@ -182,7 +184,7 @@ export class PluginManager {
 					pkgJsonPath,
 					JSON.stringify(
 						{
-							name: "omp-plugins",
+							name: "zz-plugins",
 							private: true,
 							dependencies: {},
 						},
@@ -305,7 +307,7 @@ export class PluginManager {
 			throw err;
 		}
 
-		const backupRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "omp-plugin-backup-"));
+		const backupRoot = await fs.promises.mkdtemp(path.join(os.tmpdir(), "zz-plugin-backup-"));
 		const backupPath = path.join(backupRoot, "package");
 		await fs.promises.cp(packagePath, backupPath, { recursive: true, verbatimSymlinks: true });
 		return { actualName, packagePath, backupRoot, backupPath };

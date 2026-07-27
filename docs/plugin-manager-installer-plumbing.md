@@ -20,7 +20,7 @@ zz plugin <npm/link action> ...
   -> src/commands/plugin.ts
   -> runPluginCommand(...) in src/cli/plugin-cli.ts
   -> PluginManager method (install/list/uninstall/link/...)
-  -> mutate ~/.zz/plugins/{package.json,node_modules,omp-plugins.lock.json}
+  -> mutate ~/.zz/plugins/{package.json,node_modules,zz-plugins.lock.json}
   -> runtime discovery: discoverAndLoadCustomTools(...) and discoverAndLoadExtensions(...)
   -> getAllPluginToolPaths(cwd) / getAllPluginExtensionPaths(cwd)
   -> custom tool loader imports tool modules; extension loader imports extension modules
@@ -45,7 +45,7 @@ Global plugin state lives under `~/.zz/plugins`:
 
 - `package.json` — dependency manifest used by `bun install`/`bun uninstall` for npm-installed plugins
 - `node_modules/` — installed npm plugin packages or symlinks
-- `omp-plugins.lock.json` — runtime state for npm/link plugins:
+- `zz-plugins.lock.json` — runtime state for npm/link plugins:
   - enabled/disabled per plugin
   - selected feature set per plugin
   - persisted plugin settings
@@ -100,7 +100,7 @@ Malformed `package.json` JSON is a hard failure at read time; malformed manifest
 
 1. Parse feature bracket syntax from install spec.
 2. Validate the spec: git specs via `validateGitSpec`; npm specs against the package-name regex + shell-metacharacter denylist.
-3. Ensure plugin `package.json` exists (`omp-plugins`, private dependencies map).
+3. Ensure plugin `package.json` exists (`zz-plugins`, private dependencies map).
 4. Run `bun install <packageSpec>` in `~/.zz/plugins`.
 5. Resolve the installed package name (npm: strip version via `extractPackageName`; git: diff `dependencies` before/after) and read `node_modules/<name>/package.json`.
 6. Resolve manifest and compute `enabledFeatures`:

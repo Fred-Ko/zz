@@ -161,7 +161,7 @@ export interface LoadPromptTemplatesOptions {
 /**
  * Load all prompt templates from:
  * 1. Global: agentDir/prompts/
- * 2. Project: cwd/.omp/prompts/
+ * 2. Project: cwd/.zz/prompts/ (legacy fallback when canonical config is absent)
  */
 export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = {}): Promise<PromptTemplate[]> {
 	const resolvedCwd = options.cwd ?? getProjectDir();
@@ -174,7 +174,7 @@ export async function loadPromptTemplates(options: LoadPromptTemplatesOptions = 
 	const globalPromptsDir = options.agentDir ? path.join(options.agentDir, "prompts") : resolvedAgentDir;
 	templates.push(...(await loadTemplatesFromDir(globalPromptsDir, "user")));
 
-	// 2. Load project templates from cwd/.omp/prompts/
+	// 2. Load project templates from cwd/.zz/prompts/
 	const canonicalProjectPromptsDir = getProjectPromptsDir(resolvedCwd);
 	const projectPromptsDir =
 		CONFIG_DIR_NAME !== ".omp" && !fs.existsSync(canonicalProjectPromptsDir)

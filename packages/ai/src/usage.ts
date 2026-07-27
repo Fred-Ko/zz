@@ -109,7 +109,7 @@ export interface UsageReport {
 	resetCredits?: UsageResetCredits;
 	/**
 	 * Provider-wide disclaimers shown once above per-account sections.
-	 * Use this for caveats that apply to every limit (e.g. "OMP-observed
+	 * Use this for caveats that apply to every limit (e.g. "ZZ-observed
 	 * spend only"). Per-limit notes that differ per window (e.g. "Overage
 	 * requests: N") stay on {@link UsageLimit.notes}.
 	 */
@@ -391,6 +391,16 @@ export interface CredentialRankingStrategy {
 	 * not block unrelated families on the same OAuth credential.
 	 */
 	blockScope?(context?: CredentialRankingContext): string | undefined;
+	/**
+	 * Scopes that apply to a request, most specific first. With a context, the
+	 * request's own scope plus any legacy catch-all scope whose blocks still
+	 * apply to everything. Without one — reconciliation runs with no request —
+	 * every scope whose blocks must be healed.
+	 *
+	 * A provider that scopes backoff by model family must implement this, or a
+	 * block written under one scope is invisible to requests and to healing.
+	 */
+	blockScopes?(context?: CredentialRankingContext): string[];
 	/** Fallback window durations (ms) when limits don't specify durationMs. */
 	windowDefaults: {
 		primaryMs: number;

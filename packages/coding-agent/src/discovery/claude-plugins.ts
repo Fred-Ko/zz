@@ -400,7 +400,7 @@ async function loadMCPServers(ctx: LoadContext): Promise<LoadResult<MCPServer>> 
 		const obj = parsed as Record<string, unknown>;
 
 		// Two shapes are supported:
-		//   nested: { "mcpServers": { name: cfg, ... } }   (OMP/Claude Code project shape)
+		//   nested: { "mcpServers": { name: cfg, ... } }   (ZZ/Claude Code project shape)
 		//   flat:   { name: cfg, ... }                      (Claude marketplace plugin shape)
 		// If "mcpServers" is present and an object, treat it as the canonical map.
 		// Otherwise, treat the whole object as the server map.

@@ -1203,14 +1203,14 @@ export class WriteTool implements AgentTool<typeof writeSchema, WriteToolDetails
 
 			// Check if file exists and is auto-generated before overwriting
 			if (await fs.exists(absolutePath)) {
-				await assertEditableFile(absolutePath, path);
+				await assertEditableFile(absolutePath, path, this.session.settings);
 			}
 
 			const displayPath = formatPathRelativeToCwd(absolutePath, this.session.cwd);
 			emitWriteProgress(onUpdate, cleanContent, displayPath, absolutePath);
 
 			// Try ACP bridge first for editor-visible filesystem paths. Internal
-			// artifacts such as local:// plans are owned by OMP, not the editor.
+			// artifacts such as local:// plans are owned by ZZ, not the editor.
 			if (await routeWriteThroughBridge(this.session, path, absolutePath, cleanContent, signal)) {
 				const madeExecutable = await maybeMarkExecutableForShebang(absolutePath, cleanContent);
 				const header = maybeWriteSnapshotHeader(this.session, absolutePath, cleanContent);

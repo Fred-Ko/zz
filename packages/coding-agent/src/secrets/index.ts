@@ -16,7 +16,7 @@ const cachedPlaceholderKeys = new Map<string, string>();
  * sessions so persisted transcripts deobfuscate consistently. Defaults to
  * `getAgentDir()` — the same directory `createAgentSession()` passes as
  * `agentDir` — so a caller relying on the default reads/writes the identical
- * key file live sessions use, per `~/.omp/agent/secret-placeholder.key` in
+ * key file live sessions use, per `~/.zz/agent/secret-placeholder.key` in
  * docs/secrets.md.
  */
 export async function getSecretPlaceholderKey(keyDir: string = getAgentDir()): Promise<string> {

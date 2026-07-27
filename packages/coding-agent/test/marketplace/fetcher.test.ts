@@ -181,25 +181,46 @@ describe("fetchMarketplace", () => {
 		await expect(fetchMarketplace(fakeSrc, tmpDir)).rejects.toThrow(/Marketplace catalog not found/);
 	});
 
-	it("loads catalog from .omp-plugin/marketplace.json when present", async () => {
-		const root = path.join(tmpDir, "omp-only");
+	it("loads catalog from .zz-plugin/marketplace.json when present", async () => {
+		const root = path.join(tmpDir, "zz-only");
+		fs.mkdirSync(path.join(root, ".zz-plugin"), { recursive: true });
+		const catalog = {
+			name: "zz-only-marketplace",
+			owner: { name: "Test" },
+			plugins: [{ name: "zz-plugin", source: "./plugins/zz-plugin", description: "x" }],
+		};
+		fs.writeFileSync(path.join(root, ".zz-plugin", "marketplace.json"), JSON.stringify(catalog));
+
+		const result = await fetchMarketplace(root, tmpDir);
+		expect(result.catalog.name).toBe("zz-only-marketplace");
+		expect(result.catalog.plugins[0].name).toBe("zz-plugin");
+	});
+
+	it("loads a legacy marketplace catalog when the ZZ-native catalog is absent", async () => {
+		const root = path.join(tmpDir, "legacy-only");
 		fs.mkdirSync(path.join(root, ".omp-plugin"), { recursive: true });
 		const catalog = {
-			name: "omp-only-marketplace",
+			name: "legacy-marketplace",
 			owner: { name: "Test" },
-			plugins: [{ name: "omp-plugin", source: "./plugins/omp-plugin", description: "x" }],
+			plugins: [{ name: "legacy-plugin", source: "./plugins/legacy-plugin", description: "x" }],
 		};
 		fs.writeFileSync(path.join(root, ".omp-plugin", "marketplace.json"), JSON.stringify(catalog));
 
 		const result = await fetchMarketplace(root, tmpDir);
-		expect(result.catalog.name).toBe("omp-only-marketplace");
-		expect(result.catalog.plugins[0].name).toBe("omp-plugin");
+		expect(result.catalog.name).toBe("legacy-marketplace");
+		expect(result.catalog.plugins[0].name).toBe("legacy-plugin");
 	});
 
-	it("prefers .omp-plugin/marketplace.json over .claude-plugin/marketplace.json when both exist", async () => {
+	it("prefers .zz-plugin/marketplace.json over legacy catalogs", async () => {
 		const root = path.join(tmpDir, "both-catalogs");
+		fs.mkdirSync(path.join(root, ".zz-plugin"), { recursive: true });
 		fs.mkdirSync(path.join(root, ".omp-plugin"), { recursive: true });
 		fs.mkdirSync(path.join(root, ".claude-plugin"), { recursive: true });
+		const zzCatalog = {
+			name: "from-zz-plugin",
+			owner: { name: "Test" },
+			plugins: [{ name: "p", source: "./p", description: "x" }],
+		};
 		const ompCatalog = {
 			name: "from-omp-plugin",
 			owner: { name: "Test" },
@@ -210,25 +231,26 @@ describe("fetchMarketplace", () => {
 			owner: { name: "Test" },
 			plugins: [{ name: "p", source: "./p", description: "x" }],
 		};
+		fs.writeFileSync(path.join(root, ".zz-plugin", "marketplace.json"), JSON.stringify(zzCatalog));
 		fs.writeFileSync(path.join(root, ".omp-plugin", "marketplace.json"), JSON.stringify(ompCatalog));
 		fs.writeFileSync(path.join(root, ".claude-plugin", "marketplace.json"), JSON.stringify(claudeCatalog));
 
 		const result = await fetchMarketplace(root, tmpDir);
-		expect(result.catalog.name).toBe("from-omp-plugin");
+		expect(result.catalog.name).toBe("from-zz-plugin");
 	});
 
-	it("falls back to .claude-plugin/marketplace.json when .omp-plugin is absent", async () => {
+	it("falls back to .claude-plugin/marketplace.json when ZZ-native and legacy catalogs are absent", async () => {
 		// The shared fixture only ships .claude-plugin/marketplace.json — confirms
 		// the legacy path still loads unchanged.
 		const result = await fetchMarketplace(FIXTURE_DIR, tmpDir);
 		expect(result.catalog.name).toBe("test-marketplace");
 	});
 
-	it("error message names both candidate paths when neither exists", async () => {
+	it("error message names all candidate paths when none exists", async () => {
 		const empty = path.join(tmpDir, "empty-dir");
 		fs.mkdirSync(empty, { recursive: true });
 		await expect(fetchMarketplace(empty, tmpDir)).rejects.toThrow(
-			/\.omp-plugin[\\/]marketplace\.json.*\.claude-plugin[\\/]marketplace\.json/,
+			/\.zz-plugin[\\/]marketplace\.json.*\.omp-plugin[\\/]marketplace\.json.*\.claude-plugin[\\/]marketplace\.json/,
 		);
 	});
 

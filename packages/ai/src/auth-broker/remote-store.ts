@@ -14,6 +14,7 @@ import {
 	type AuthCredential,
 	type AuthCredentialSnapshotEntry,
 	type AuthCredentialStore,
+	type DisabledCredentialSummary,
 	type OAuthCredential,
 	REMOTE_REFRESH_SENTINEL,
 	type StoredAuthCredential,
@@ -471,6 +472,11 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
 		return out;
 	}
 
+	/** Broker-backed disabled tombstones; empty against brokers predating the endpoint. */
+	listDisabledCredentials(provider?: string, signal?: AbortSignal): Promise<DisabledCredentialSummary[]> {
+		return this.#client.listDisabledCredentials(provider, signal);
+	}
+
 	getCredentialBlock(credentialId: number, providerKey: string, blockScope: string): number | undefined {
 		const nowMs = Date.now();
 		this.cleanExpiredCredentialBlocks(nowMs);
@@ -531,6 +537,12 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
 					error: String(error),
 				});
 			});
+	}
+
+	deleteCredentialBlock(_credentialId: number, _providerKey: string, _blockScope: string): void {
+		// The broker protocol only supports deleting every block for a credential.
+		// Keep scoped blocks until expiry rather than risk deleting unrelated or
+		// newer broker state through that broader operation.
 	}
 
 	deleteCredentialBlocks(credentialId: number): void {
@@ -630,19 +642,19 @@ export class RemoteAuthCredentialStore implements AuthCredentialStore {
 
 	replaceAuthCredentialsForProvider(_provider: string, _credentials: AuthCredential[]): StoredAuthCredential[] {
 		throw new AIError.AuthBrokerError(
-			"RemoteAuthCredentialStore is read-only on the client. Use `omp auth-broker login <provider>` to mutate credentials.",
+			"RemoteAuthCredentialStore is read-only on the client. Use `zz auth-broker login <provider>` to mutate credentials.",
 		);
 	}
 
 	upsertAuthCredentialForProvider(_provider: string, _credential: AuthCredential): StoredAuthCredential[] {
 		throw new AIError.AuthBrokerError(
-			"RemoteAuthCredentialStore is read-only on the client. Use `omp auth-broker login <provider>` to mutate credentials.",
+			"RemoteAuthCredentialStore is read-only on the client. Use `zz auth-broker login <provider>` to mutate credentials.",
 		);
 	}
 
 	deleteAuthCredentialsForProvider(_provider: string, _disabledCause: string): void {
 		throw new AIError.AuthBrokerError(
-			"RemoteAuthCredentialStore is read-only on the client. Use `omp auth-broker logout <provider>` to mutate credentials.",
+			"RemoteAuthCredentialStore is read-only on the client. Use `zz auth-broker logout <provider>` to mutate credentials.",
 		);
 	}
 

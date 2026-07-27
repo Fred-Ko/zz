@@ -15,6 +15,12 @@ export default class Update extends Command {
 		plugins: Flags.boolean({ char: "l", description: "Update installed plugins", default: false }),
 	};
 
+	static examples = [
+		"zz update",
+		"zz update --check",
+		"# If GitHub rate-limits release metadata, set GITHUB_TOKEN or GH_TOKEN\n  GITHUB_TOKEN=... zz update",
+	];
+
 	async run(): Promise<void> {
 		const { flags } = await this.parse(Update);
 		await initTheme();

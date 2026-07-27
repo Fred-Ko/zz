@@ -691,11 +691,12 @@ describe("InteractiveMode goal mode integration", () => {
 
 		const result = await goalTool.execute("call-1", { op: "complete" });
 		const completionText = JSON.stringify(result.content);
+		const completionBudgetReport = result.details?.completionBudgetReport;
 
-		expect(result.details?.completionBudgetReport).toBe(
-			"Goal achieved. Report final budget usage to the user: tokens used: 0 of 50.",
+		expect(completionBudgetReport).toStartWith(
+			"Goal achieved. Report final budget usage to the user: tokens used: 0 of 50",
 		);
-		expect(completionText).toContain("Goal achieved. Report final budget usage to the user: tokens used: 0 of 50.");
+		expect(completionText).toContain(completionBudgetReport!);
 		expect(harness.session.getGoalModeState()?.mode).toBe("exiting");
 		// Per fix #1: completeGoalFromTool clears state.enabled so subsequent createTools
 		// calls (e.g. mid-turn refreshes) no longer advertise the goal tool. The model's

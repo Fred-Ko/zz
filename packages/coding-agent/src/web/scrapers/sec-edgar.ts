@@ -178,7 +178,7 @@ export const handleSecEdgar: SpecialHandler = async (
 			timeout,
 			signal,
 			headers: {
-				"User-Agent": "CodingAgent/1.0 (research tool)",
+				"User-Agent": "zz/1.0 (research tool)",
 				Accept: "application/json",
 			},
 		});
