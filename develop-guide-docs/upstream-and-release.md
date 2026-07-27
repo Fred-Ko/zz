@@ -1,5 +1,7 @@
 # Upstream 동기화와 릴리스
 
+> **문서 상태: 현재 · fork 유지와 배포 절차**
+
 ## 1. 원격 구조
 
 권장 원격:
@@ -157,6 +159,10 @@ bun run release
 - 다중 행 상태줄에 모델명이 계속 표시되는가
 - 기본 대화 언어가 한국어인가
 - 자동 QA 도구/설정/UI가 재유입되지 않았는가
-- workflow lifecycle과 coordinator가 type/schema 변경을 흡수했는가
+- 원본 `/goal`, `/guided-goal`에 ZZW gate가 다시 결합되지 않았는가
+- 내장 ZZW lifecycle/SQLite store가 upstream type·schema 변경을 흡수했는가
+- 별도 `workflowd`나 coordinator 의존성이 다시 생기지 않았는가
+- upstream OMP Memory, Mnemopi, `memory://`, transcript auto-retain이 재유입되지 않았는가
+- ZZ Knowledge가 독립 wrapper와 Global/Repository Bank 경계를 유지하는가
 - Hindsight가 authoritative state처럼 주입되지 않는가
 - `zz --smoke-test`가 worker와 tiny subprocess를 통과하는가

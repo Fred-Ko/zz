@@ -1,32 +1,40 @@
 # ZZ Knowledge System 개발 가이드
 
+> **문서 상태: 현재 · 권위 있는 Knowledge 구현 계약**
+>
+> 사용자 명시 retain/recall과 운영 명령은 [product-workflows.md](product-workflows.md)를 함께 본다.
+
 ## 1. 비호환 경계
 
 ZZ Knowledge는 upstream OMP Memory를 확장하지 않는다. Mnemopi, 기존 memory backend, transcript retain/recall, `memory://`, `/memory`, legacy tool/prompt/setting을 import하거나 compatibility wrapper로 되살리는 변경은 금지한다.
 
 ```text
-Authoritative current state          Advisory durable knowledge
+Authoritative current-state plane    Advisory Knowledge plane
 Git / workspace                      ZZ Knowledge policy
-ZZWorkflow Registry           ───▶   Hindsight wrapper
+ZZWorkflow Registry                  Hindsight wrapper
 Plan DAG / operation journal         working-set cache
 Verification evidence                retain groups / curation
+            서로의 저장 계층이 아니며 authority를 공유하지 않음
 ```
+
+Task lifecycle hook이 planning·resume·completion 경계에서 Knowledge operation을 요청할 수는 있지만,
+ZZW state를 Hindsight에 복제하거나 Knowledge 결과로 Registry를 덮어쓰지 않는다.
 
 ## 2. 코드 소유권
 
-| 책임 | 위치 |
-| --- | --- |
-| public taxonomy와 runtime 계약 | `src/knowledge/types.ts` |
-| Global/Repository Bank ID·표시 이름·scope 라우팅 | `src/knowledge/bank-routing.ts` |
-| tag compile/parse 정책 | `src/knowledge/tag-policy.ts` |
-| managed bank profile | `src/knowledge/bank-profile.ts` |
-| 명시적 대화 intent 후보 판정 | `src/knowledge/conversation-intent.ts` |
-| 설정 해석 | `src/knowledge/config.ts` |
-| Hindsight HTTP API | `src/knowledge/hindsight-client.ts` |
-| outbox/group/cache/review SQLite | `src/knowledge/store.ts` |
-| policy orchestration | `src/knowledge/runtime.ts` |
-| 모델 도구 | `src/tools/knowledge-*.ts` |
-| system policy와 상황별 skill | `src/prompts/system/knowledge-policy.md`, `src/skills/knowledge-operator/SKILL.md` |
+| 책임                                             | 위치                                                                               |
+| ------------------------------------------------ | ---------------------------------------------------------------------------------- |
+| public taxonomy와 runtime 계약                   | `src/knowledge/types.ts`                                                           |
+| Global/Repository Bank ID·표시 이름·scope 라우팅 | `src/knowledge/bank-routing.ts`                                                    |
+| tag compile/parse 정책                           | `src/knowledge/tag-policy.ts`                                                      |
+| managed bank profile                             | `src/knowledge/bank-profile.ts`                                                    |
+| 명시적 대화 intent 후보 판정                     | `src/knowledge/conversation-intent.ts`                                             |
+| 설정 해석                                        | `src/knowledge/config.ts`                                                          |
+| Hindsight HTTP API                               | `src/knowledge/hindsight-client.ts`                                                |
+| outbox/group/cache/review SQLite                 | `src/knowledge/store.ts`                                                           |
+| policy orchestration                             | `src/knowledge/runtime.ts`                                                         |
+| 모델 도구                                        | `src/tools/knowledge-*.ts`                                                         |
+| system policy와 상황별 skill                     | `src/prompts/system/knowledge-policy.md`, `src/skills/knowledge-operator/SKILL.md` |
 
 Hindsight URL, bank ID, raw tag, observation scope를 다른 모듈에서 직접 조립하지 않는다. Bank ID와 대시보드 표시 이름은 `bank-routing.ts`를 단일 원본으로 사용한다.
 
@@ -92,14 +100,61 @@ project 표시 이름을 우선하고, 없으면 `fork` remote와 `origin` 순�
 `createKnowledgeBankProfile()`의 ZZ 소유 설정:
 
 - retain/observation/reflect mission
-- named retain strategies
+- named retain strategies:
+  - `durable-fact`: concise extraction
+  - `canonical-document`: chunks, `retain_chunk_size=1200`
+  - `reference-document`: chunks, `retain_chunk_size=1600`
+  - `investigation`: verbose extraction
+  - `append-document`: chunks, `retain_chunk_size=8000`
 - observation enabled, auto consolidation disabled
-- skeptical/literal disposition
+- skepticism 5, literalism 4, empathy 2의 engineering-oriented disposition
 - Hindsight MCP read-only tool allowlist
 
 `merge` mode는 `GET /config`의 overrides와 desired profile을 비교하고 drift면 `PATCH /config { updates }`를 실행한다. `inspect-only`는 drift 상태만 SQLite에 기록한다. credential, provider URL/model 같은 server-only 필드는 profile에 넣지 않는다.
 
 Bank config에 새 필드를 추가할 때 Hindsight 공식 config API에서 per-bank configurable인지 확인한다. profile version을 올리고 실제 PATCH payload를 검증하는 contract test를 갱신한다.
+
+### 최초 초기화 시점
+
+Bank는 설정 파일을 저장하는 순간 무조건 생성하지 않는다. `knowledge.enabled=true`인 session에서
+Knowledge runtime이 실제로 필요해지는 첫 동작이 초기화를 촉발한다.
+
+```text
+/knowledge status 또는 banks
+knowledge_recall / retain / retain_document / reflect
+session orientation
+ZZW intake·planning·resume의 허용된 recall
+```
+
+초기화는 다음 순서로 idempotent하게 수행한다.
+
+1. `userId + securityBoundary`로 boundary local DB와 Global Bank ID를 계산한다.
+2. 현재 repository identity와 표시 이름으로 Repository Bank ID/name을 계산한다.
+3. `banks.db` catalog에서 security boundary 수 제한과 기존 binding을 확인한다.
+4. Hindsight Bank가 없으면 만들고, 있으면 opaque ID는 유지한 채 표시 이름만 동기화한다.
+5. managed profile을 조회해 `merge` 또는 `inspect-only` 정책을 적용한다.
+6. local runtime/outbox/working-set state를 준비한다.
+
+Hindsight가 꺼져 있거나 HTTP 요청이 실패하면 현재 Git/ZZW state를 손상시키지 않는다. retain은
+outbox에 남을 수 있고 recall은 degraded/failed provider 상태를 명시한다.
+
+### 주요 설정
+
+| 설정                                | 기본값     | 의미                                                  |
+| ----------------------------------- | ---------- | ----------------------------------------------------- |
+| `knowledge.enabled`                 | `false`    | 독립 Knowledge layer와 model tools 활성화             |
+| `knowledge.userId`                  | `default`  | 사용자 지식 격리를 위한 안정 identity                 |
+| `knowledge.securityBoundary`        | `personal` | personal/company/customer 같은 보안 경계              |
+| `knowledge.repositoryDisplayName`   | 없음       | Repository Bank의 사람이 읽는 이름 override           |
+| `knowledge.bank.managedConfigMode`  | `merge`    | profile 적용 또는 `inspect-only` drift 보고           |
+| `knowledge.bank.maxBanksPerUser`    | `4`        | user당 security boundary 수 상한; repo bank 수가 아님 |
+| `knowledge.recall.quickTokens`      | `1000`     | 중복·단일 사실 recall budget                          |
+| `knowledge.recall.normalTokens`     | `4000`     | 일반 구현 recall budget                               |
+| `knowledge.recall.deepTokens`       | `10000`    | 계획·디버깅·재계획 budget                             |
+| `knowledge.recall.forensicTokens`   | `20000`    | 복합 장애·충돌 분석 상한                              |
+| `knowledge.mentalModels.maxPerRepo` | `4`        | repository mental model 상한                          |
+
+전체 설정과 timeout은 `docs/settings.md`를 단일 사용자 reference로 사용한다.
 
 ## 6. Retain routing
 
@@ -131,6 +186,21 @@ knowledge_retain_document
 
 `chunks`는 원문을 청크로 보존하고 LLM fact extraction을 피한다. independently correctable knowledge는 document blob에만 묻지 말고 atomic record로도 분리한다.
 
+선택 기준:
+
+| 조건                                        | Atomic retain         | Document retain      |
+| ------------------------------------------- | --------------------- | -------------------- |
+| 한 문장으로 정정 가능한 규칙·결정·실패 패턴 | 적합                  | 과도함               |
+| ADR·runbook·운영 매뉴얼 원문                | 핵심 결론만 병행 가능 | 적합                 |
+| source 전체를 새 버전으로 교체              | 부적합                | `replace`            |
+| 시간순 로그·release note를 이어 붙임        | 일부 교훈만 가능      | `append`             |
+| 과거 버전을 불변 이력으로 보존              | revision fact 가능    | `immutable-revision` |
+| section/chunk 단위 검색 필요                | 부적합                | 적합                 |
+
+Document retain의 `sourceId`는 파일 경로·공식 문서 ID처럼 버전이 바뀌어도 같은 논리 출처를
+가리켜야 한다. Atomic retain의 `knowledgeKey`도 문장 hash가 아니라 논리적 의미를 나타내는 안정
+key여야 한다.
+
 Observation scope는 `schema + exact scope + domain + status`를 기본으로 하고 component별 scope를 추가한다. `retain-group`, `source`, `confidence`, `form`을 observation scope에 넣으면 observation이 과도하게 분절되므로 금지한다. `"per_tag"`도 금지한다.
 
 ## 7. Recall
@@ -160,6 +230,10 @@ user text
 
 prompt는 반드시 `.md`에 둔다. false positive를 줄이기 위해 단순히 “memory/Knowledge를 설명해” 같은 문장은 매칭하지 않는다. 새 표현을 지원하면 네 intent를 구분하는 contract test를 추가한다.
 
+명시적 요청에서는 `request_origin=user-explicit`을 유지한다. 같은 user message에서 여러 tool call이
+발생하면 `user_message_entry_id` 기반 group을 재사용한다. agent가 대화만 보고 “저장했다”거나
+“기억이 없다”고 결론내리지 않고 실제 receipt/provider 결과를 사용자에게 보여 줘야 한다.
+
 ## 9. Curation
 
 - invalidate: active → invalidated
@@ -180,6 +254,10 @@ Correction은 기존 scope/form/domain/knowledge key를 보존하고 source/conf
 ```
 
 첫 DB는 boundary별 outbox/group/cache/review를, `banks.db`의 `knowledge_bank_catalog_v2`는 raw 사용자 값을 저장하지 않는 Global/Repository Bank hash catalog, 표시 이름 provenance와 security-boundary 수 제한을 담당한다. 기존 단일-Bank catalog와 `zz-knowledge-v1-*` Bank는 새 라우팅에서 사용하지 않으며 자동 삭제하지 않는다. 기존 DB에는 group member의 `bank_id`가 없을 수 있으므로 `PRAGMA table_info` 뒤 `ALTER TABLE ADD COLUMN`과 기존 group Bank backfill을 사용한다. destructive migration이나 ZZWorkflow DB 병합은 하지 않는다. WAL, foreign keys, busy timeout을 유지한다.
+
+사용자가 비어 있는 legacy `zz-knowledge-v1-*` Bank를 정리하고 싶더라도 runtime이 이름 prefix만 보고
+자동 삭제하지 않는다. 영구 삭제는 정확한 target과 Hindsight 상태를 확인한 사용자 명시 작업으로
+다룬다.
 
 ## 11. 검증
 

@@ -1,10 +1,28 @@
-# 보관된 초기 설계안
+# ZZ 개발 시작 전 초기 아이디어 아카이브
 
-> 이 문서는 구현 전 논의를 보존한 참고 자료이며 현재 구조의 권위 있는 명세가 아니다.
-> 별도 `workflowd`, 멀티머신 조정, upstream OMP Memory/Mnemopi/autolearn 위에
-> 구축하는 내용은 폐기됐다. 현재 구현은
-> [controlled-workflow.md](controlled-workflow.md)와
-> [knowledge-system.md](knowledge-system.md)를 따른다.
+> **문서 상태: 역사 자료 · 비권위 문서**
+>
+> 이 문서는 ZZ 프로젝트를 본격적으로 개발하기 전에 작성한 초기 아이디어와 설계 탐색 과정을
+> 원문에 가깝게 보존한다. 현재 제품의 명세, 구현 계약, 개발 지침으로 사용하면 안 된다.
+> 문서 안에는 이후 폐기되거나 크게 변경된 별도 `workflowd`, 멀티머신 coordinator,
+> upstream OMP Memory/Mnemopi/autolearn 기반 통합 등의 제안이 포함돼 있다.
+>
+> 현재의 권위 있는 설명은 다음 문서를 따른다.
+>
+> - [project-identity.md](project-identity.md): 프로젝트 정체성, 목표, 비목표
+> - [design-philosophy.md](design-philosophy.md): 현재 채택한 설계 원칙
+> - [architecture-decisions.md](architecture-decisions.md): 채택·폐기한 주요 결정
+> - [controlled-workflow.md](controlled-workflow.md): 현재 ZZWorkflow 구현 계약
+> - [knowledge-system.md](knowledge-system.md): 현재 ZZ Knowledge 구현 계약
+
+## 이 문서를 보존하는 이유
+
+- 최초 문제의식과 설계가 어떻게 출발했는지 추적한다.
+- 현재 결정이 어떤 대안을 검토한 끝에 나왔는지 이해한다.
+- 폐기된 아이디어를 새 요구사항처럼 오해하지 않으면서도 향후 재평가 근거를 남긴다.
+
+아래 내용은 작성 당시의 표현과 중복을 의도적으로 유지한다. 현재 상태와 충돌하면 항상 위의
+현재 문서와 실제 코드·테스트를 우선한다.
 
 맞다. Codex·Claude Code형 에이전틱 코딩은 **하나의 실행 루프**가 아니라, 여러 종류의 대화와 작업 상태가 이어지는 **수명주기**로 모델링해야 한다.
 

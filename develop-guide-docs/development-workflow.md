@@ -1,12 +1,18 @@
 # ZZ 개발 워크플로
 
+> **문서 상태: 현재 · 명령과 작업 절차**
+>
+> 구현 판단과 코드 품질 규칙은 [engineering-guidelines.md](engineering-guidelines.md)가 상세히
+> 설명한다. 이 문서는 환경 준비부터 검증·설치까지의 실행 순서에 집중한다.
+
 ## 1. 환경 준비
 
 필수 도구:
 
 - Bun: 루트 `package.json`의 고정 버전 기준
 - Git
-- Rust toolchain: 네이티브 패키지를 수정할 때
+- Rust toolchain: 네이티브 패키지를 수정할 때 `rust-toolchain.toml`의 pinned nightly
+- `cargo-nextest`: Rust test 실행 시
 - Python/ruff/pytest: `python/` 패키지를 수정할 때
 - `pkexec`: 시스템 권한이 필요한 설치 작업
 
@@ -61,6 +67,9 @@ zz --smoke-test
 
 `zz`를 실행하면 현재 저장소 전용 `~/.zz/agent/workflows/<repository-id>/workflow.db`가 필요할 때 자동 생성된다. 이 경로는 기존 설치와의 데이터 호환성을 위해 유지하는 ZZWorkflow 저장 경로다. 예전 전역 `~/.zz/agent/workflow.db`가 있으면 활성 lease가 없을 때 현재 저장소 데이터만 자동 이전한다.
 
+별도 `zz-workflowd` 설치나 실행 단계는 없다. Knowledge를 켠 경우에만 Hindsight 서버는 독립 외부
+서비스로 준비하며, `zz`와 ZZW 자체 실행에는 필요하지 않다.
+
 ## 3. 변경 전 조사
 
 코드를 쓰기 전에:
@@ -70,6 +79,7 @@ zz --smoke-test
 3. 외부 API 타입은 `node_modules`의 실제 선언을 확인한다.
 4. 생성 파일인지 확인한다.
 5. 현재 `git status --short --branch`를 확인해 사용자 변경과 경계를 파악한다.
+6. `demo/`처럼 nested repository가 있는지 확인하고 상위 저장소 변경과 섞지 않는다.
 
 중앙 유틸리티 우선 탐색 위치:
 
@@ -155,6 +165,17 @@ bun run check:rs
 bun run test
 ```
 
+Rust 변경:
+
+```sh
+rustup show active-toolchain
+bun run test:rs
+bun run check:rs
+```
+
+`cargo test`로 임의 대체하지 않는다. `bun run test:rs`가 pinned toolchain과 `cargo nextest`의
+출력·실행 계약을 사용한다.
+
 바이너리/worker 계약:
 
 ```sh
@@ -193,8 +214,38 @@ zz --smoke-test
 | Hindsight             | strict tag, redaction, outbox, authority 경계 테스트  |
 | Rust/native           | 관련 Rust 테스트 + native build                       |
 | 설치/alias            | link/profile alias 테스트 + 실제 `command -v zz`      |
+| 개발 문서             | Markdown link/path/명령 대조 + 역사/현재 상태 표기    |
 
-## 8. Changelog
+## 8. 빌드와 로컬 설치 확인
+
+소스 link 개발 환경을 다시 구성하려면:
+
+```sh
+bun run setup
+command -v zz
+readlink -f "$(command -v zz)"
+zz --version
+zz --smoke-test
+```
+
+coding-agent compiled binary만 만들려면:
+
+```sh
+bun --cwd=packages/coding-agent run build
+packages/coding-agent/dist/zz --version
+packages/coding-agent/dist/zz --smoke-test
+```
+
+설치 검증에서는 실행 파일 존재만 확인하지 않는다. smoke test가 stats worker와 tiny-model subprocess의
+CLI re-entry 계약을 실제로 통과해야 한다.
+
+전체 설치 방식 회귀는 비용이 크므로 worker, bundle, installer, link script 변경에서 실행한다.
+
+```sh
+bun run ci:test:install-methods
+```
+
+## 9. Changelog
 
 사용자에게 보이는 패키지 변경은 해당 `packages/*/CHANGELOG.md`의 `## [Unreleased]` 아래에 기록한다.
 
@@ -208,7 +259,7 @@ zz --smoke-test
 
 이미 릴리스된 버전 절은 수정하지 않는다.
 
-## 9. 완료 보고
+## 10. 완료 보고
 
 개발 완료 시 다음을 명시한다.
 

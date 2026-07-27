@@ -18,13 +18,34 @@
 Read the smallest relevant guide before changing a subsystem:
 
 - [`develop-guide-docs/README.md`](develop-guide-docs/README.md) — guide index and first-day checklist
+- [`develop-guide-docs/project-identity.md`](develop-guide-docs/project-identity.md) — project mission, identity, product layers, and non-goals
+- [`develop-guide-docs/design-philosophy.md`](develop-guide-docs/design-philosophy.md) — authority, prompt/tool/runtime separation, approvals, evidence, and memory principles
+- [`develop-guide-docs/product-workflows.md`](develop-guide-docs/product-workflows.md) — user-facing ordinary Goal, ZZW, recovery, and Knowledge flows
 - [`develop-guide-docs/architecture.md`](develop-guide-docs/architecture.md) — package boundaries and runtime flow
+- [`develop-guide-docs/architecture-decisions.md`](develop-guide-docs/architecture-decisions.md) — accepted, replaced, and deferred architecture decisions
+- [`develop-guide-docs/engineering-guidelines.md`](develop-guide-docs/engineering-guidelines.md) — implementation, persistence, TUI, testing, and documentation quality rules
 - [`develop-guide-docs/development-workflow.md`](develop-guide-docs/development-workflow.md) — setup, implementation, tests, build, and installation
-- [`develop-guide-docs/controlled-workflow.md`](develop-guide-docs/controlled-workflow.md) — ZZWorkflow(ZZW), Plan DAG, local SQLite recovery, and Hindsight
+- [`develop-guide-docs/controlled-workflow.md`](develop-guide-docs/controlled-workflow.md) — ZZWorkflow(ZZW), Plan DAG, local SQLite recovery, operations, and evidence
 - [`develop-guide-docs/knowledge-system.md`](develop-guide-docs/knowledge-system.md) — independent ZZ Knowledge policy, Hindsight wrapper, outbox, and mental models
 - [`develop-guide-docs/upstream-and-release.md`](develop-guide-docs/upstream-and-release.md) — upstream synchronization, fork pushing, and release policy
 
-New developer-guide documents belong under `develop-guide-docs/`. Product/user reference documentation continues to live under `docs/`.
+Historical source:
+
+- [`develop-guide-docs/initial-concept-archive.md`](develop-guide-docs/initial-concept-archive.md) — pre-implementation ideas preserved for design history; never use it as a current specification, implementation contract, or development authority
+
+## Development Documentation Maintenance
+
+- Keep current developer architecture, concepts, decisions, and internal procedures under `develop-guide-docs/`. Keep user-facing command and configuration reference under `docs/`, and package-specific public API guidance in the relevant `packages/*/README.md`.
+- Every current guide must state its authority/status near the top. Historical documents must be explicitly marked non-authoritative and link to the current replacement documents.
+- Treat `initial-concept-archive.md` as a preserved historical record. Do not rewrite its original proposals to match the current implementation, and do not revive its discarded `workflowd`, multi-machine coordinator, or OMP Memory assumptions by citing the archive. Add current decisions to `architecture-decisions.md` and the relevant subsystem guide instead.
+- When code changes product identity, user flow, commands, settings, package boundaries, persistence paths, state transitions, approval behavior, Knowledge policy, installation, or release behavior, update the owning current guide in the same change.
+- Update `project-identity.md` for mission/non-goal changes, `design-philosophy.md` for cross-cutting principles, `product-workflows.md` for user journeys, `architecture.md` for runtime/package boundaries, and `architecture-decisions.md` for accepted/replaced/deferred decisions.
+- Update `controlled-workflow.md` for ZZW contracts and `knowledge-system.md` for ZZ Knowledge contracts. Keep those systems independent: ZZW owns current task execution state; Knowledge owns advisory durable knowledge policy.
+- Update `engineering-guidelines.md` when implementation or test standards change, `development-workflow.md` when runnable commands or installation steps change, and `upstream-and-release.md` when fork synchronization or release policy changes.
+- Verify documented commands and setting keys against their actual registries/schemas. Verify local Markdown links, run the repository formatter for changed current guides, and run `git diff --check` before handoff.
+- When renaming or removing a guide, update this map, `develop-guide-docs/README.md`, all incoming links, and any public docs that reference it. Do not use vague current-guide names such as `custom`, `new`, or `current`.
+- Avoid copying the same contract into multiple guides. Keep one canonical explanation in the owning guide and link to it elsewhere so the documents do not drift.
+- Whenever either root instruction file changes, apply the exact same edit to both `AGENTS.md` and `CLAUDE.md` and verify they remain byte-for-byte identical.
 
 ## Agent Operating Rules
 

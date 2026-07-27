@@ -1,8 +1,15 @@
 # ZZ 아키텍처
 
+> **문서 상태: 현재 · 권위 있는 시스템 구조**
+
+제품의 목적과 비목표는 [project-identity.md](project-identity.md), 계층을 나누는 이유는
+[design-philosophy.md](design-philosophy.md)를 먼저 본다.
+
 ## 1. 시스템의 성격
 
-ZZ는 Bun 기반 모노레포로 구성된 터미널 코딩 에이전트다. 핵심 제품은 `packages/coding-agent`의 `zz` CLI이며, 모델 호출·도구 실행·TUI·지속 상태·협업·장기 지식을 명확한 계층으로 분리한다.
+ZZ는 Bun 기반 모노레포로 구성된 터미널 코딩 에이전트다. 핵심 제품은
+`packages/coding-agent`의 `zz` CLI이며, 모델 호출·도구 실행·TUI·지속 상태·협업·장기 지식을
+명확한 계층으로 분리한다.
 
 이 포크는 upstream OMP 위에 다음을 추가하거나 변경한다.
 
@@ -28,13 +35,18 @@ zz CLI / TUI
    ├─ packages/wire        공유 wire 타입
    └─ packages/collab-web  웹 클라이언트와 도구 렌더러
 
-ZZWorkflow (ZZW)
-├─ packages/coding-agent/src/workflow
-├─ packages/coding-agent/src/goals/task-lifecycle.ts
-└─ packages/coding-agent/src/knowledge
+ZZWorkflow (ZZW)                 ZZ Knowledge
+├─ src/workflow                  ├─ src/knowledge
+├─ src/goals/task-lifecycle.ts   ├─ src/tools/knowledge-*.ts
+├─ src/goals/runtime.ts          ├─ src/prompts/knowledge
+└─ src/tools/workflow-control.ts └─ src/skills/knowledge-operator
 ```
 
-패키지의 공개 타입과 값은 올바른 소유 패키지에서 가져온다. 특히 catalog 값은 `@oh-my-pi/pi-catalog/<module>`에서 가져오며 `pi-ai`를 우회 barrel로 사용하지 않는다.
+ZZW와 Knowledge는 `AgentSession`에서 함께 조립되지만 서로의 저장 계층이 아니다. ZZW는 Knowledge가
+비활성화돼도 동작하고, Knowledge는 active ZZW Task가 없어도 명시적 사용자 요청을 처리한다.
+
+패키지의 공개 타입과 값은 올바른 소유 패키지에서 가져온다. 특히 catalog 값은
+`@oh-my-pi/pi-catalog/<module>`에서 가져오며 `pi-ai`를 우회 barrel로 사용하지 않는다.
 
 ## 3. CLI 부팅 흐름
 
@@ -68,6 +80,9 @@ src/sdk.ts → AgentSession
 
 `src/cli.ts`는 worker host도 겸한다. 컴파일 바이너리에서 worker가 별도 엔트리 파일을 요구하지 않도록 현재 CLI 엔트리로 재진입한다. 숨은 selector는 upstream 호환을 위해 `__omp_worker_*` 이름을 유지할 수 있다. 새 worker를 추가하면 selector dispatch, 직접 모듈 fallback, `zz --smoke-test`를 함께 갱신한다.
 
+ZZWorkflow도 이 프로세스 안에서 초기화된다. `zz`를 실행하면 필요한 session/lifecycle integration과
+저장소 binding이 함께 생기며 별도 `zz-workflowd`를 시작하지 않는다.
+
 ## 4. 프롬프트와 규칙 합성
 
 프롬프트는 다음 계층에서 온다.
@@ -78,6 +93,7 @@ src/sdk.ts → AgentSession
 4. `AGENTS.md`/`CLAUDE.md`와 매칭된 규칙
 5. 필요할 때 읽는 Skill
 6. 현재 Task/Plan/Git/Evidence에서 생성한 동적 ZZWorkflow context
+7. 목적별 recall이 있을 때 교체되는 advisory Knowledge working set
 
 정적 프롬프트는 `src/prompts/**/*.md`에 두고 `import ... with { type: "text" }`로 불러온다. 동적 값은 Handlebars 데이터로 전달한다. TypeScript에서 긴 프롬프트 문자열을 조립하지 않는다.
 
@@ -87,22 +103,56 @@ src/sdk.ts → AgentSession
 
 각 저장소의 권한을 섞지 않는다.
 
-| 저장소                    | 소유하는 사실                                         |
-| ------------------------- | ----------------------------------------------------- |
-| Git                       | 추적 파일, commit, branch, 로컬 checkpoint            |
-| `~/.zz/agent/workflows/<repository-id>/workflow.db` | 저장소별 Task 상태, event, operation, lease, heartbeat |
-| `~/.zz/agent/knowledge/boundary-<hash>/knowledge.db` | Knowledge outbox, working-set 캐시, 검토 영수증 |
-| Verification evidence     | 특정 workspace snapshot에서의 검증 결과               |
-| Hindsight                 | 과거 결정·경험·사용자 선호에 대한 advisory memory     |
-| 세션 로그                 | 대화와 도구 실행 기록                                 |
+| 저장소                                               | 소유하는 사실                                          |
+| ---------------------------------------------------- | ------------------------------------------------------ |
+| Git                                                  | 추적 파일, commit, branch, 로컬 checkpoint             |
+| `~/.zz/agent/workflows/<repository-id>/workflow.db`  | 저장소별 Task 상태, event, operation, lease, heartbeat |
+| `~/.zz/agent/knowledge/boundary-<hash>/knowledge.db` | Knowledge outbox, working-set 캐시, 검토 영수증        |
+| Verification evidence                                | 특정 workspace snapshot에서의 검증 결과                |
+| Hindsight                                            | 과거 결정·경험·사용자 선호에 대한 advisory memory      |
+| 세션 로그                                            | 대화와 도구 실행 기록                                  |
 
-Hindsight recall 결과는 현재 HEAD, 현재 설정, ZZWorkflow registry, 최신 테스트 결과를 덮어쓸 수 없다.
+Hindsight recall 결과는 현재 HEAD, 현재 설정, ZZWorkflow registry, 최신 테스트 결과를 덮어쓸 수
+없다. 세션 transcript도 사건 기록이지 현재 상태를 복원하는 유일한 원본이 아니다.
+
+### 5.1 ZZW 제어 흐름
+
+```text
+사용자 /zzw-guided-goal
+  → Goal interview
+  → Task Specification
+  → read-only discovery
+  → draft Plan DAG
+  → /zzw approve-plan
+  → goal continuation
+  → active step tool gate
+  → operation journal
+  → evidence / verification
+  → next step, reconciliation, or material reapproval
+```
+
+원본 `/goal`과 `/guided-goal`은 이 경로를 타지 않는다.
+
+### 5.2 Knowledge 흐름
+
+```text
+사용자 명시 요청 또는 제한된 lifecycle trigger
+  → intent/purpose 판정
+  → security boundary + Global/Repository bank routing
+  → taxonomy/evidence/redaction/dedup policy
+  → local outbox / working set
+  → Hindsight retain/recall/reflect
+  → advisory result와 receipt
+```
+
+Hindsight HTTP 실패는 Knowledge provider 상태와 outbox에 격리된다. 이를 ZZW Task의 현재 상태 실패로
+바꾸지 않는다.
 
 ## 6. 데이터베이스
 
 이 포크에서 관계형 저장소는 SQLite로 통일한다.
 
-- ZZWorkflow registry: `~/.zz/agent/workflows/<repository-id>/workflow.db` (호환 저장 경로)
+- ZZWorkflow registry: `~/.zz/agent/workflows/<repository-id>/workflow.db`
 - ZZ Knowledge policy state: `~/.zz/agent/knowledge/boundary-<hash>/knowledge.db`
 - coding-agent 내부 상태: 설정과 XDG 조건에 따라 `~/.zz` 또는 `$XDG_*_HOME/zz`
 
@@ -118,6 +168,11 @@ SQLite 사용 시:
 
 upstream OMP의 기존 Memory, Mnemopi, transcript auto-retain/auto-recall과 `memory://` 프로토콜은 제거됐다. Hindsight HTTP 호출은 `src/knowledge/hindsight-client.ts` 밖에서 직접 사용하지 않는다.
 
+Repository identity는 프로젝트 이름만으로 만들지 않는다. 가능한 경우 canonical remote와 Git
+identity를 사용하고, fork remote와 project override는 사람이 읽는 표시 이름에 활용한다. Git이
+없는 디렉터리에서 시작한 뒤 `git init`을 하거나 cwd/repository boundary가 바뀌면 다음 안전한
+경계에서 workflow와 Knowledge binding을 다시 계산한다.
+
 ## 7. TUI와 LSP
 
 TUI는 differential rendering을 사용하므로 `console.log`가 화면을 깨뜨린다. 모든 진단은 중앙 logger로 보낸다. 화면 문자열은 탭 치환, ANSI-aware truncate, 홈 경로 축약을 거친다.
@@ -128,6 +183,10 @@ LSP는 파일을 읽거나 수정하는 대체 수단이 아니라 의미 기반
 - LSP 결과가 없거나 서버가 준비되지 않았을 때 텍스트 검색으로 fallback한다.
 - 서버 프로세스는 장기 실행·스트리밍 프로세스이므로 `Bun.spawn` 수명주기로 관리한다.
 - 기본 서버 설정은 `packages/coding-agent/src/lsp/defaults.json`, 사용자 설정은 `docs/lsp-config.md`를 따른다.
+
+상태줄은 model/effort, Goal 또는 ZZW phase, repository/worktree/branch, session, token/context,
+비용·시간을 폭에 맞춰 여러 행에 배치한다. 상태줄은 Registry와 session 상태의 projection이며 상태를
+직접 소유하지 않는다.
 
 ## 8. 자동 QA 제거 불변식
 

@@ -1,5 +1,9 @@
 # ZZWorkflow(ZZW) 개발 가이드
 
+> **문서 상태: 현재 · 권위 있는 ZZW 구현 계약**
+>
+> 사용자 관점의 시작·승인·재개 흐름은 [product-workflows.md](product-workflows.md)를 함께 본다.
+
 ## 1. 목적
 
 ZZWorkflow(약어 ZZW)는 모델의 대화 기억에만 의존하지 않고 코딩 Task를 여러 세션에서 안전하게 이어가기 위한 `zz` 내장 계층이다. 별도 daemon이나 HTTP coordinator는 사용하지 않는다. 현재 상태는 로컬 SQLite registry, Git, operation journal, verification evidence에서 결정하며 Hindsight는 과거 경험을 보조한다.
@@ -34,16 +38,16 @@ Task
 
 ## 3. 주요 코드
 
-| 영역                  | 위치                                                |
-| --------------------- | --------------------------------------------------- |
-| Task lifecycle        | `packages/coding-agent/src/goals/task-lifecycle.ts` |
-| Goal runtime 연동     | `packages/coding-agent/src/goals/runtime.ts`        |
-| 로컬 ZZWorkflow 통합  | `packages/coding-agent/src/workflow/integration.ts` |
-| SQLite registry/store | `packages/coding-agent/src/workflow/store.ts`       |
-| 설정                  | `packages/coding-agent/src/workflow/config.ts`      |
-| ZZ Knowledge 통합     | `packages/coding-agent/src/knowledge/`              |
-| 정적 ZZWorkflow prompt | `packages/coding-agent/src/prompts/goals/`          |
-| 모델용 ZZWorkflow 도구 | `packages/coding-agent/src/tools/workflow-control.ts` |
+| 영역                     | 위치                                                  |
+| ------------------------ | ----------------------------------------------------- |
+| Task lifecycle           | `packages/coding-agent/src/goals/task-lifecycle.ts`   |
+| Goal runtime 연동        | `packages/coding-agent/src/goals/runtime.ts`          |
+| 로컬 ZZWorkflow 통합     | `packages/coding-agent/src/workflow/integration.ts`   |
+| SQLite registry/store    | `packages/coding-agent/src/workflow/store.ts`         |
+| 설정                     | `packages/coding-agent/src/workflow/config.ts`        |
+| Knowledge lifecycle hook | `packages/coding-agent/src/knowledge/`                |
+| 정적 ZZWorkflow prompt   | `packages/coding-agent/src/prompts/goals/`            |
+| 모델용 ZZWorkflow 도구   | `packages/coding-agent/src/tools/workflow-control.ts` |
 
 ## 4. Authority 순서
 
@@ -59,6 +63,23 @@ Task
 8. Hindsight memory
 
 Hindsight는 가장 아래의 advisory context다. 과거에 맞았던 기억이 현재 HEAD에서 틀릴 수 있다.
+
+### Phase vocabulary
+
+현재 persisted phase는 다음 집합을 사용한다.
+
+```text
+INTAKE → DISCOVERY → SPECIFICATION → PREPARATION
+       → AWAITING_USER → READY → EXECUTING → VERIFYING → COMPLETING
+                          ↘ RECONCILING / REPLANNING
+PAUSING → SUSPENDED → RECOVERING
+INTERRUPTED
+COMPLETED / ABANDONED / FAILED
+```
+
+이 그림은 가능한 모든 edge를 뜻하지 않는다. 실제 전이 허용 여부는 lifecycle runtime이 결정한다.
+새 phase를 추가하면 persisted snapshot normalization, prompt profile, tool gate, 상태줄, slash command,
+resume/recovery test를 함께 갱신한다.
 
 ## 5. Side effect 프로토콜
 
@@ -86,6 +107,10 @@ Hindsight는 가장 아래의 advisory context다. 과거에 맞았던 기억이
 Plan DAG는 OMP Todo에서 가져오지 않는다. `zzw_propose_plan` 또는 `zzw_patch_plan`이 만든 Registry 상태가 권위 있으며, Todo는 현재 Plan을 TUI에 보여 주는 읽기 전용 projection이다. ZZWorkflow가 활성화된 동안에만 Todo mutation은 거부된다. 원본 Goal의 Todo는 기존 동작을 유지한다.
 
 최초 실행 Plan은 항상 `draft`이며 모델은 자신의 제안을 승인할 수 없다. 사용자가 `/zzw approve-plan`을 실행한 뒤에만 side effect가 허용된다. 이후 Plan은 실행 중 발견에 따라 버전이 증가하며, 각 step에는 최초 버전, 최근 계약 변경 버전, 계약 hash, parent, supersedes/supersededBy, assumption, 입력·출력 artifact가 남는다. 교체·무효화된 노드는 삭제하지 않고 lineage로 보존한다.
+
+승인 명령은 Plan 상태 전이 뒤 Goal continuation을 요청한다. active Goal, ready Plan, blocker 없음인데도
+승인 후 실행이 시작되지 않는 회귀를 막기 위해 slash command/TUI와 continuation callback의 연결을
+계약으로 테스트한다. Goal이 `SUSPENDED`라면 승인 반복이 아니라 `/zzw-goal resume`이 필요하다.
 
 Plan은 tree가 아니라 DAG다. `parentStepId`는 화면의 계층을 표현하고, 실제 실행 순서는 `dependsOn` edge가 결정한다. 여러 선행 단계가 하나의 후속 단계로 합쳐지거나 한 단계가 여러 후속 단계로 갈라질 수 있다.
 
@@ -250,7 +275,7 @@ knowledge:
 - secret redaction과 `~/.zz/agent/knowledge/boundary-<hash>/knowledge.db`의 durable outbox를 통과한다.
 - mutable summary는 최신 문서가 이전 문서를 대체한다.
 - Goal 완료는 자동 저장이 아니라 review receipt만 생성한다.
-- 전역 1개와 저장소 최대 4개의 mental model은 자동 갱신하지 않는다.
+- 사용자 전역 mental model 1개와 저장소 mental model 최대 4개는 자동 갱신하지 않는다.
 
 ## 12. 필수 테스트
 
