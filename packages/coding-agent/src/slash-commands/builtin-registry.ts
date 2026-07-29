@@ -59,6 +59,7 @@ import {
 	renderChangelogEntries,
 } from "../utils/changelog";
 import { copyToClipboard } from "../utils/clipboard";
+import { buildZZWorkflowPlanDiagram } from "../workflow/plan-presentation";
 import { CollabQrCodeComponent } from "./helpers/collab-qrcode";
 import { buildContextReportText } from "./helpers/context-report";
 import { formatDuration } from "./helpers/format";
@@ -179,6 +180,7 @@ function planStepDepth(step: TaskPlanStep, byId: ReadonlyMap<string, TaskPlanSte
 function renderZZWorkflowPlan(state: TaskLifecycleState): string {
 	const byId = new Map(state.plan.steps.map(step => [step.id, step]));
 	const latestChange = state.plan.changes?.at(-1);
+	const diagram = buildZZWorkflowPlanDiagram(state.plan);
 	const lines = [
 		`ZZWorkflow Plan v${state.planVersion} · ${state.plan.approval ?? "draft"} · ${state.plan.status}`,
 		`기준 버전: v${state.plan.basedOnVersion ?? "없음"} · 승인 영향: ${state.plan.approvalImpact ?? "초기"}`,
@@ -186,7 +188,16 @@ function renderZZWorkflowPlan(state: TaskLifecycleState): string {
 	if (latestChange) {
 		lines.push(`최근 변경: ${latestChange.kind}/${latestChange.classification} · ${latestChange.rationale}`);
 	}
-	lines.push("");
+	if (diagram) {
+		lines.push("", "현재 실행 그래프", "", diagram.markdown);
+		if (diagram.hiddenStepIds.length > 0) {
+			lines.push(
+				"",
+				`비활성 계보 ${diagram.hiddenStepIds.length}개는 실행 그래프에서 제외하고 아래 상세에 보존합니다.`,
+			);
+		}
+	}
+	lines.push("", "단계 상세", "");
 	for (const step of state.plan.steps) {
 		const indent = "  ".repeat(planStepDepth(step, byId));
 		const relations = [

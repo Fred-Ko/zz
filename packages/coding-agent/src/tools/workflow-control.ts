@@ -15,6 +15,7 @@ import reportObservationDescription from "../prompts/tools/workflow-report-obser
 import reportStepResultDescription from "../prompts/tools/workflow-report-step-result.md" with { type: "text" };
 import submitVerificationDescription from "../prompts/tools/workflow-submit-verification.md" with { type: "text" };
 import { loadZZWorkflowConfig } from "../workflow/config";
+import { buildZZWorkflowPlanDiagram } from "../workflow/plan-presentation";
 import type { ToolSession } from ".";
 import { previewLine, TRUNCATE_LENGTHS } from "./render-utils";
 
@@ -121,12 +122,20 @@ function requireRuntime(session: ToolSession) {
 	return runtime;
 }
 
-function planApprovalResultText(plan: TaskPlan, heading: string): string {
+function planResultText(plan: TaskPlan, heading: string): string {
+	const diagram = buildZZWorkflowPlanDiagram(plan);
 	const steps = plan.steps.map(
 		(step, index) =>
 			`${index + 1}. [${previewLine(step.id, TRUNCATE_LENGTHS.TITLE)}] ${previewLine(step.content, TRUNCATE_LENGTHS.LONG)}`,
 	);
-	return [heading, "", ...steps, "", "승인 후 실행:", "/zzw approve-plan"].join("\n");
+	return [
+		heading,
+		...(diagram ? ["", diagram.markdown] : []),
+		"",
+		...steps,
+		"",
+		...(plan.approval === "approved" ? ["승인 상태: 기존 승인 유지"] : ["승인 후 실행:", "/zzw approve-plan"]),
+	].join("\n");
 }
 
 function stepProposal(step: typeof planStepSchema.infer): TaskPlanStepProposal {
@@ -328,7 +337,7 @@ export class ZZWorkflowProposePlanTool implements AgentTool<typeof proposePlanSc
 				content: [
 					{
 						type: "text",
-						text: planApprovalResultText(plan, `Plan DAG v${plan.version} 제안 완료 · 사용자 승인 대기`),
+						text: planResultText(plan, `Plan DAG v${plan.version} 제안 완료 · 사용자 승인 대기`),
 					},
 				],
 				details: plan,
@@ -389,12 +398,12 @@ export class ZZWorkflowPatchPlanTool implements AgentTool<typeof patchPlanSchema
 				content: [
 					{
 						type: "text",
-						text: approvalRequired
-							? planApprovalResultText(
-									plan,
-									`Plan DAG v${plan.version} 중요 변경 제안 완료 · 사용자 재승인 대기`,
-								)
-							: `Plan DAG v${plan.version}에 구조적 변경을 적용했습니다. 기존 승인이 유지되어 실행을 계속할 수 있습니다.`,
+						text: planResultText(
+							plan,
+							approvalRequired
+								? `Plan DAG v${plan.version} 중요 변경 제안 완료 · 사용자 재승인 대기`
+								: `Plan DAG v${plan.version}에 구조적 변경을 적용했습니다. 기존 승인이 유지되어 실행을 계속할 수 있습니다.`,
+						),
 					},
 				],
 				details: plan,

@@ -34,7 +34,7 @@ Runtime이 `DELEGATION_ASSESSMENT_MISSING`으로 거절한다. 현재 정책은 
 
 ## 결과와 승인
 
-검증된 새 Plan 버전을 `draft`로 저장하고 ZZWorkflow를 사용자 승인 대기 상태로 전환합니다. 제안 자체는 승인이 아니며, 사용자는 `/zzw approve-plan`으로 승인해야 합니다. 성공한 도구 결과에는 Plan 단계 요약과 승인 명령이 표시되고 현재 agent turn은 즉시 끝납니다. 승인 전까지 추가 모델 호출, 실행 시도, Todo reminder와 Goal continuation이 발생하지 않습니다.
+검증된 새 Plan 버전을 `draft`로 저장하고 ZZWorkflow를 사용자 승인 대기 상태로 전환합니다. 제안 자체는 승인이 아니며, 사용자는 `/zzw approve-plan`으로 승인해야 합니다. 성공한 도구 결과에는 Registry의 `dependsOn`에서 생성한 Mermaid DAG, Plan 단계 요약과 승인 명령이 표시되고 현재 agent turn은 즉시 끝납니다. TUI는 이 Mermaid를 현재 터미널 폭에 맞는 ASCII/유니코드 그래프로 표시합니다. 승인 전까지 추가 모델 호출, 실행 시도, Todo reminder와 Goal continuation이 발생하지 않습니다.
 
 모든 성공 조건은 validation 또는 acceptance 단계에, 모든 명시적 검증 요구사항은 실행 명령이 있는 validation 단계에 연결되어야 합니다. Plan DAG에는 순환이 없어야 합니다.
 

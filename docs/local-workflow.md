@@ -56,6 +56,15 @@ patch or another approval. Operation fingerprints include the workspace
 pre-state, so a real code correction differs from an unchanged retry; a repeated
 matching failure forces Plan repair.
 
+Accepted Plan proposals and patches show a Mermaid-derived terminal graph directly
+in their tool card, and `/zzw plan` prints the same graph before its detailed step
+list. ZZ generates this view deterministically from Registry step IDs and
+`dependsOn`; it is not model-authored state. The Markdown renderer converts it to
+ASCII/Unicode, chooses the narrower TD/LR layout for the current terminal, and falls
+back to the Mermaid code fence when `tui.renderMermaid` is disabled. Superseded,
+invalidated, and abandoned lineage stays in the detailed history but is omitted from
+the current execution graph.
+
 ## Execution Waves
 
 The default `validation` mode runs independent validator commands in bounded parallel

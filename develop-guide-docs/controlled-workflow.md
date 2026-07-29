@@ -138,11 +138,19 @@ Plan patch는 위험도에 따라 승인 경계가 다르다.
 사용자는 다음 명령으로 실제 Registry 상태와 변경 근거를 확인한다.
 
 - `/zzw status`: phase, active step, reconciliation, 다음 동작
-- `/zzw plan`: 계층·dependency·lineage를 포함한 현재 DAG
+- `/zzw plan`: 현재 `dependsOn` 실행 DAG의 Mermaid 터미널 그래프와 계층·dependency·lineage 상세
 - `/zzw history`: Plan 버전별 변경 요약
 - `/zzw diff [version]`: 추가·수정·교체·무효화·보존 ID와 원인
 - `/zzw why <step-id>`: 특정 step의 계약, 증거, 관찰, 변경 이유
 - `/zzw evidence`, `/zzw operations`, `/zzw lanes`: 증거, operation journal, Execution Wave/Lane 상태
+
+Plan 제안과 패치 도구 카드는 Registry의 step ID와 `dependsOn` edge에서 결정적으로 생성한 Mermaid
+그래프를 기본 상태에서도 표시한다. `/zzw plan`도 같은 projection을 사용한다. 그래프 소스를 모델에게
+작성하게 하지 않으며 `parentStepId` 들여쓰기를 실행 edge로 해석하지 않는다. TUI Markdown 계층이
+Mermaid를 ASCII/유니코드로 렌더링하고 현재 폭에 맞춰 TD/LR 방향을 선택한다. `invalidated`,
+`superseded`, `abandoned` node는 현재 실행 그래프에서 제외하지만 아래 단계 상세와 Plan lineage에는
+계속 보존하여 과거 경로가 실행 가능해 보이지 않게 한다. Mermaid 렌더링을 끈 환경에서는 동일한
+결정적 Mermaid source가 일반 code fence로 남는다.
 
 사용자 설정 namespace도 `zzworkflow`를 사용한다. 이전 `workflow.heartbeatIntervalSeconds`와 `workflow.workspaceLeaseSeconds`는 로드 시 아래 키로 자동 이전한다.
 

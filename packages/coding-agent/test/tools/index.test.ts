@@ -440,20 +440,13 @@ describe("createTools", () => {
 		});
 
 		expect(tool.concurrency).toBe("exclusive");
-		expect(accepted.content).toEqual([
-			{
-				type: "text",
-				text: [
-					"Plan DAG v2 제안 완료 · 사용자 승인 대기",
-					"",
-					"1. [work] Implement",
-					"2. [verify] Verify",
-					"",
-					"승인 후 실행:",
-					"/zzw approve-plan",
-				].join("\n"),
-			},
-		]);
+		const acceptedText = accepted.content.find(content => content.type === "text")?.text;
+		expect(acceptedText).toContain("Plan DAG v2 제안 완료 · 사용자 승인 대기");
+		expect(acceptedText).toContain("```mermaid\nflowchart TD");
+		expect(acceptedText).toContain("n0 --> n1");
+		expect(acceptedText).toContain("1. [work] Implement");
+		expect(acceptedText).toContain("2. [verify] Verify");
+		expect(acceptedText).toContain("승인 후 실행:\n/zzw approve-plan");
 		expect(runtime.state).toMatchObject({ phase: "AWAITING_USER", planVersion: 2 });
 	});
 

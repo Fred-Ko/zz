@@ -101,6 +101,11 @@ Plan이 만들어지면 사용자는 다음을 확인한다.
 /zzw history
 ```
 
+Plan 제안 카드와 `/zzw plan`은 `dependsOn`을 기준으로 분기와 합류가 보이는 터미널 그래프를 먼저
+표시하고 단계별 execution·delegation·resource·lineage 상세를 뒤에 표시한다. 그래프는 모델의 요약이
+아니라 현재 Registry에서 생성한 읽기 전용 projection이다. 교체·무효화·포기된 과거 node는 실행
+그래프에서 제외되지만 상세와 변경 이력에는 남는다.
+
 초기 Plan은 `draft`이며 실행하려면 다음을 입력한다.
 
 ```text

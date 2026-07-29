@@ -28,6 +28,7 @@ import { readToolRenderer } from "./read";
 import { resolveRenderer } from "./resolve";
 import { todoToolRenderer } from "./todo";
 import { createVibeToolRenderer } from "./vibe";
+import { zzwPatchPlanRenderer, zzwProposePlanRenderer } from "./workflow-plan-renderer";
 import { writeToolRenderer } from "./write";
 import { setXdevRendererLookup } from "./xdev";
 
@@ -121,6 +122,8 @@ export const toolRenderers: Record<string, ToolRenderer> = {
 	vibe_kill: createVibeToolRenderer("kill") as ToolRenderer,
 	vibe_list: createVibeToolRenderer("list") as ToolRenderer,
 	write: writeToolRenderer as ToolRenderer,
+	zzw_patch_plan: zzwPatchPlanRenderer as ToolRenderer,
+	zzw_propose_plan: zzwProposePlanRenderer as ToolRenderer,
 };
 
 // Wire the xd:// render delegation. Injected (instead of the xdev module

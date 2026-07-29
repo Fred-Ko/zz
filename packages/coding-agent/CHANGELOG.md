@@ -4,6 +4,7 @@
 
 ### Added
 
+- Added deterministic Mermaid/terminal visualization of authoritative ZZWorkflow Plan DAGs to Plan proposal and patch cards and `/zzw plan`, including real `dependsOn` forks and joins, automatic terminal-width layout, and separation of inactive lineage from the current execution graph.
 - Added resource-aware ZZWorkflow Execution Waves with durable per-Lane operation/evidence attribution, bounded parallel validators, read-only and isolated-write subagent executors, sequential scoped patch integration, cancellation domains, recovery-safe unknown states, `/zzw lanes`, and live Wave status.
 - Added optional bounded Work Units and an independently configurable adversarial review gate for isolated-write candidates, including independent Work Unit and reviewer model+effort selection without price or capability ranking assumptions, scheduling-independent review, automatically resolved isolation backends, fresh reviewer agents, candidate-only validators, bounded repairs, durable lineage, and review-aware Lane visibility.
 - Added structured delegated Plan-impact reporting for Work Units and adversarial reviewers, with execution-only bounded repair, structural Plan-patch reconciliation, contract-level user decisions, candidate quarantine, Observation/evidence attribution, and `/zzw lanes` visibility.

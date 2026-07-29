@@ -12,7 +12,7 @@ Runtime이 실패 단계, observation의 step·assumption·artifact 연결과 DA
 
 완료 단계를 직접 수정할 수 없습니다. 새 ID의 대체 단계를 추가하고 `supersedes`로 연결해야 하며, Runtime이 옛 단계를 자동으로 비활성화합니다. 같은 ID를 `remove_step_ids`에 중복 지정할 필요가 없고 옛 단계는 삭제되지 않은 채 lineage에 남습니다. 활성 단계는 superseded·invalidated 단계에 의존할 수 없습니다. 빈 patch는 retry 우회로 간주해 거부합니다.
 
-구조적 serial 변경은 기본 설정에서 기존 승인을 유지하고 바로 실행을 계속합니다. 실패한 validator를 동일 exact command·executor·tool/target/risk envelope로 교체하거나 승인된 검증 환경 준비 단계를 추가하는 것도 structural입니다. 도구 권한 확대, high-risk 작업, 성공·검증 기준 약화, 완료 결과 무효화, 기존 execution 계약 변경, 승인 경계에 없던 validator/subagent executor 추가 또는 exact validator 명령 변경은 material 변경으로 `/zzw approve-plan` 재실행이 필요합니다. material patch가 저장되면 단계 요약과 승인 명령을 표시한 뒤 현재 agent turn이 즉시 끝납니다. `zzworkflow.planPatchApproval: always`이면 모든 patch가 재승인 대상입니다.
+구조적 serial 변경은 기본 설정에서 기존 승인을 유지하고 바로 실행을 계속합니다. 실패한 validator를 동일 exact command·executor·tool/target/risk envelope로 교체하거나 승인된 검증 환경 준비 단계를 추가하는 것도 structural입니다. 도구 권한 확대, high-risk 작업, 성공·검증 기준 약화, 완료 결과 무효화, 기존 execution 계약 변경, 승인 경계에 없던 validator/subagent executor 추가 또는 exact validator 명령 변경은 material 변경으로 `/zzw approve-plan` 재실행이 필요합니다. 성공한 patch 결과는 현재 Registry에서 다시 생성한 Mermaid 실행 DAG를 표시합니다. material patch가 저장되면 단계 요약과 승인 명령을 표시한 뒤 현재 agent turn이 즉시 끝납니다. `zzworkflow.planPatchApproval: always`이면 모든 patch가 재승인 대상입니다.
 
 전체 계획을 다시 쓰는 용도가 아니라 확인된 원인을 제거하는 최소 변경에 사용합니다.
 
