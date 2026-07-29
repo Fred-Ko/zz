@@ -69,7 +69,6 @@ import { clearClaudePluginRootsCache } from "../discovery/helpers";
 import type {
 	AutocompleteProviderFactory,
 	ContextUsage,
-	ExtensionAskDialogQuestion,
 	ExtensionUIContext,
 	ExtensionUIDialogOptions,
 	ExtensionUISelectItem,
@@ -79,13 +78,6 @@ import type {
 import type { CompactOptions } from "../extensibility/extensions/types";
 import type { Skill } from "../extensibility/skills";
 import { loadSlashCommands } from "../extensibility/slash-commands";
-import {
-	type GuidedGoalMessage,
-	type GuidedGoalQuestionResult,
-	type GuidedGoalTurnResult,
-	newGuidedGoalSessionId,
-	runGuidedGoalTurn,
-} from "../goals/guided-setup";
 import {
 	type Goal,
 	type GoalController,
@@ -104,6 +96,8 @@ import {
 } from "../mcp/startup-events";
 import { humanizePlanTitle, type PlanApprovalDetails, resolvePlanTitle } from "../plan-mode/approved-plan";
 import { resolvePlanModelTransition } from "../plan-mode/model-transition";
+import guidedGoalInterviewPrompt from "../prompts/goals/guided-goal-interview.md" with { type: "text" };
+import zzwGuidedGoalInterviewPrompt from "../prompts/goals/zzw-guided-goal-interview.md" with { type: "text" };
 import planModeApprovedPrompt from "../prompts/system/plan-mode-approved.md" with { type: "text" };
 import planModeCompactInstructionsPrompt from "../prompts/system/plan-mode-compact-instructions.md" with {
 	type: "text",
@@ -167,7 +161,6 @@ import { type PlanReviewAnnotationState, PlanReviewOverlay } from "./components/
 import { StatusLineComponent } from "./components/status-line";
 import type { ToolExecutionHandle } from "./components/tool-execution";
 import { TranscriptContainer } from "./components/transcript-container";
-import { UserMessageComponent } from "./components/user-message";
 import { WelcomeComponent, type LspServerInfo as WelcomeLspServerInfo } from "./components/welcome";
 import { BtwController } from "./controllers/btw-controller";
 import { CommandController } from "./controllers/command-controller";
@@ -223,19 +216,9 @@ import type {
 	TodoItem,
 	TodoPhase,
 } from "./types";
-import { createAssistantMessageComponent } from "./utils/interactive-context-helpers";
 import { UiHelpers } from "./utils/ui-helpers";
 
 const STILL_CLOSING_DELAY_MS = 3_000;
-
-const GUIDED_GOAL_MESSAGE_USAGE: AssistantMessage["usage"] = {
-	input: 0,
-	output: 0,
-	cacheRead: 0,
-	cacheWrite: 0,
-	totalTokens: 0,
-	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
-};
 
 const HINT_SHIMMER_PALETTE: ShimmerPalette = {
 	low: "dim",
@@ -550,7 +533,6 @@ export class InteractiveMode implements InteractiveModeContext {
 	#pendingSubmittedInput: SubmittedUserInput | undefined;
 	#pendingSubmissionDispose: (() => void) | undefined;
 	#optimisticUserMessageComponents: Component[] = [];
-	#guidedGoalInput: { resolve: (value: string | undefined) => void } | undefined;
 	lastSigintTime = 0;
 	lastEscapeTime = 0;
 	lastLeftTapTime = 0;
@@ -2839,7 +2821,7 @@ export class InteractiveMode implements InteractiveModeContext {
 		reason?: "completed" | "paused" | "dropped";
 	}): Promise<void> {
 		const previousTools = this.#goalModePreviousTools;
-		if (this.goalModeEnabled && previousTools) {
+		if (previousTools) {
 			await this.session.setActiveToolsByName(previousTools);
 		}
 		const currentState = this.session.getGoalModeState();
@@ -3398,9 +3380,10 @@ export class InteractiveMode implements InteractiveModeContext {
 
 	/**
 	 * `/vibe` toggle. Entering installs the ephemeral vibe tools, strips the
-	 * active toolset down to `read` plus those tools, and injects the director
-	 * context. Exiting unregisters them, restores the previous toolset, and kills
-	 * every worker session so workers cannot outlive the mode that directs them.
+	 * active toolset down to `read`, optional parent-owned `todo`, plus those
+	 * tools, and injects the director context. Exiting unregisters them, restores
+	 * the previous toolset, and kills every worker session so workers cannot
+	 * outlive the mode that directs them.
 	 */
 	async handleVibeModeCommand(initialPrompt?: string): Promise<void> {
 		if (this.vibeModeEnabled) {
@@ -3438,7 +3421,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		const ownerScope = vibeRegistry.ownerScope(this.#vibeParentSession());
 		vibeRegistry.activateScope(ownerScope);
 		const previousTools = this.session.getEnabledToolNames();
-		await this.session.activateVibeTools(["read"]);
+		const vibeBaseTools = ["read"];
+		if (this.session.hasBuiltInTool("todo")) vibeBaseTools.push("todo");
+		await this.session.activateVibeTools(vibeBaseTools);
 		this.#vibeModePreviousTools = previousTools;
 		this.#vibeModeOwnerScope = ownerScope;
 		this.vibeModeEnabled = true;
@@ -3451,7 +3436,9 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 		this.#updateVibeModeStatus();
 		if (options?.persistModeChange !== false) this.sessionManager.appendModeChange("vibe");
-		this.showStatus("Vibe mode enabled. You direct fast/good worker sessions; toolset is read + vibe tools.");
+		this.showStatus(
+			"Vibe mode enabled. You direct fast/good worker sessions; toolset is read + optional parent Todo + vibe tools.",
+		);
 	}
 
 	async #exitVibeMode(): Promise<void> {
@@ -3571,165 +3558,6 @@ export class InteractiveMode implements InteractiveModeContext {
 		}
 	}
 
-	#presentGuidedGoalAssistantMessage(text: string): void {
-		const component = createAssistantMessageComponent(this);
-		const model = this.session.model;
-		const message: AssistantMessage = {
-			role: "assistant",
-			content: [{ type: "text", text }],
-			api: model?.api ?? "openai-codex-responses",
-			provider: model?.provider ?? "openai-codex",
-			model: model?.id ?? "guided-goal",
-			usage: { ...GUIDED_GOAL_MESSAGE_USAGE },
-			stopReason: "stop",
-			timestamp: Date.now(),
-		};
-		component.updateContent(message);
-		component.markTranscriptBlockFinalized();
-		this.present(component);
-	}
-
-	#presentGuidedGoalUserMessage(text: string): void {
-		this.present(new UserMessageComponent(text));
-	}
-
-	#guidedGoalAnswerText(
-		result: GuidedGoalQuestionResult,
-		selectedOptions: readonly string[],
-		customInput: string | undefined,
-		note: string | undefined,
-	): { model: string; display: string } | undefined {
-		const normalizedCustom = customInput?.trim();
-		const normalizedNote = note?.trim();
-		if (normalizedCustom) {
-			return {
-				model: normalizedNote ? `${normalizedCustom}\n\n${normalizedNote}` : normalizedCustom,
-				display: normalizedNote ? `${normalizedCustom}\n\n추가 메모: ${normalizedNote}` : normalizedCustom,
-			};
-		}
-		if (selectedOptions.length === 0) return undefined;
-		const model = selectedOptions
-			.map(label => {
-				const description = result.options?.find(option => option.label === label)?.description;
-				return description ? `${label} — ${description}` : label;
-			})
-			.join("\n");
-		const display = selectedOptions
-			.map(label => {
-				const description = result.options?.find(option => option.label === label)?.description;
-				return description ? `**${label}**\n${description}` : `**${label}**`;
-			})
-			.join("\n\n");
-		return {
-			model: normalizedNote ? `${model}\n\n${normalizedNote}` : model,
-			display: normalizedNote ? `${display}\n\n추가 메모: ${normalizedNote}` : display,
-		};
-	}
-
-	async #requestGuidedGoalAnswer(result: GuidedGoalQuestionResult, turn: number): Promise<string | undefined> {
-		const askDialog = this.getToolUIContext()?.askDialog;
-		if (!askDialog || !result.options?.length) {
-			this.#presentGuidedGoalAssistantMessage(result.question);
-			const answer = (await this.#requestGuidedGoalInput("목표 인터뷰 · 답변을 입력하고 Enter를 누르세요"))?.trim();
-			if (!answer) return undefined;
-			this.#presentGuidedGoalUserMessage(answer);
-			return answer;
-		}
-
-		const headerParts = [`${turn + 1}/6`];
-		if (result.header?.trim()) headerParts.push(result.header.trim());
-		const question: ExtensionAskDialogQuestion = {
-			id: `guided-goal-${turn + 1}`,
-			question: result.question,
-			header: headerParts.join(" · "),
-			options: result.options,
-			...(result.recommended !== undefined ? { recommended: result.recommended } : {}),
-			...(result.multi !== undefined ? { multi: result.multi } : {}),
-		};
-		this.setHookStatus("guided-goal", "목표 인터뷰 · 선택지를 고르거나 직접 입력하세요");
-		try {
-			const dialogResult = await askDialog([question]);
-			if (!dialogResult) return undefined;
-			if (dialogResult.kind === "chat") {
-				this.#presentGuidedGoalAssistantMessage(result.question);
-				const answer = (
-					await this.#requestGuidedGoalInput("목표 인터뷰 · 질문에 대해 자유롭게 답변하고 Enter를 누르세요")
-				)?.trim();
-				if (!answer) return undefined;
-				this.#presentGuidedGoalUserMessage(answer);
-				return answer;
-			}
-			const answerResult = dialogResult.results[0];
-			if (!answerResult) return undefined;
-			const answer = this.#guidedGoalAnswerText(
-				result,
-				answerResult.selectedOptions,
-				answerResult.customInput,
-				answerResult.note,
-			);
-			if (!answer) return undefined;
-			this.#presentGuidedGoalAssistantMessage(result.question);
-			this.#presentGuidedGoalUserMessage(answer.display);
-			return answer.model;
-		} finally {
-			this.setHookStatus("guided-goal", undefined);
-		}
-	}
-
-	async #requestGuidedGoalInput(status: string, prefill?: string): Promise<string | undefined> {
-		if (this.#guidedGoalInput) {
-			throw new Error("이미 목표 인터뷰 답변을 기다리고 있습니다.");
-		}
-		this.editor.clearDraft();
-		if (prefill) this.editor.setText(prefill);
-		this.setHookStatus("guided-goal", status);
-		this.ui.setFocus(this.editor);
-		this.ui.requestRender();
-
-		const { promise, resolve } = Promise.withResolvers<string | undefined>();
-		this.#guidedGoalInput = { resolve };
-		return promise;
-	}
-
-	submitGuidedGoalInput(text: string): boolean {
-		const pending = this.#guidedGoalInput;
-		if (!pending) return false;
-		this.#guidedGoalInput = undefined;
-		this.editor.clearDraft();
-		this.setHookStatus("guided-goal", undefined);
-		pending.resolve(text);
-		this.ui.requestRender();
-		return true;
-	}
-
-	cancelGuidedGoalInput(): boolean {
-		const pending = this.#guidedGoalInput;
-		if (!pending) return false;
-		this.#guidedGoalInput = undefined;
-		this.editor.clearDraft();
-		this.setHookStatus("guided-goal", undefined);
-		pending.resolve(undefined);
-		this.ui.requestRender();
-		return true;
-	}
-
-	async #runGuidedGoalInterviewTurn(
-		messages: readonly GuidedGoalMessage[],
-		sideSessionId: string,
-	): Promise<GuidedGoalTurnResult> {
-		this.editor.disableSubmit = true;
-		this.setWorkingMessage("목표 인터뷰 응답을 생성하는 중…");
-		this.ensureLoadingAnimation();
-		this.ui.requestRender();
-		try {
-			return await runGuidedGoalTurn(this.session, { messages, sideSessionId });
-		} finally {
-			this.editor.disableSubmit = false;
-			this.#stopLoadingAnimation(true);
-			this.ui.requestRender();
-		}
-	}
-
 	async handleGuidedGoalCommand(rest?: string): Promise<void> {
 		await this.#handleGuidedGoalCommand("goal", rest);
 	}
@@ -3742,6 +3570,10 @@ export class InteractiveMode implements InteractiveModeContext {
 		try {
 			if (this.planModeEnabled || this.planModePaused) {
 				this.showWarning("먼저 계획 모드를 종료하세요.");
+				return;
+			}
+			if (this.vibeModeEnabled) {
+				this.showWarning("Exit vibe mode first.");
 				return;
 			}
 			if (!this.session.settings.get("goal.enabled")) {
@@ -3770,63 +3602,33 @@ export class InteractiveMode implements InteractiveModeContext {
 				return;
 			}
 
-			this.editor.clearDraft();
-			const initial = rest?.trim()
-				? rest.trim()
-				: (await this.#requestGuidedGoalInput("목표 인터뷰 · 개발하려는 내용을 입력하고 Enter를 누르세요"))?.trim();
-			if (!initial) return;
-			this.#presentGuidedGoalUserMessage(initial);
-
-			const messages: GuidedGoalMessage[] = [{ role: "user", content: initial }];
-			let latestDraftObjective: string | undefined;
-			// One Codex side session for the whole interview: every follow-up turn
-			// reuses it so a multi-question interview shares a single websocket-only
-			// Codex socket instead of leaking one per turn (#5471 review).
-			const guidedGoalSessionId = newGuidedGoalSessionId(this.session);
-			for (let turn = 0; turn < 6; turn++) {
-				const result = await this.#runGuidedGoalInterviewTurn(messages, guidedGoalSessionId);
-				if (result.objective?.trim()) latestDraftObjective = result.objective.trim();
-				if (result.kind === "question") {
-					messages.push({ role: "assistant", content: result.question });
-					const answer = (await this.#requestGuidedGoalAnswer(result, turn))?.trim();
-					if (!answer) return;
-					messages.push({ role: "user", content: answer });
-					continue;
-				}
-
-				this.#presentGuidedGoalAssistantMessage(result.objective);
-				const finalObjective = (
-					await this.#requestGuidedGoalInput(
-						"목표 검토 · 필요하면 수정한 뒤 Enter를 눌러 확정하세요",
-						result.objective,
-					)
-				)?.trim();
-				if (!finalObjective) return;
-				await this.#startGoalFromObjective(finalObjective, controller);
-				return;
+			// Expose the goal tool for the interview so the agent can finish by
+			// calling `goal create`. Record the pre-interview toolset first: the
+			// tool-driven create flips goalModeEnabled via `goal_updated`, and the
+			// eventual goal exit restores this set (dropping the goal tool again).
+			const enabledTools = this.session.getEnabledToolNames();
+			this.#goalModePreviousTools = enabledTools.filter(name => name !== "goal");
+			if (!enabledTools.includes("goal")) {
+				await this.session.setActiveToolsByName([...enabledTools, "goal"]);
 			}
 
-			// Hit the turn cap without an explicit `ready`. Rather than discard the whole interview,
-			// salvage the latest non-empty model objective draft seen on any earlier turn. A final
-			// question turn may omit `objective`; that must not erase a usable draft.
-			if (latestDraftObjective) {
-				this.#presentGuidedGoalAssistantMessage(latestDraftObjective);
-				const finalObjective = (
-					await this.#requestGuidedGoalInput(
-						"목표 검토 · 필요하면 수정한 뒤 Enter를 눌러 확정하세요",
-						latestDraftObjective,
-					)
-				)?.trim();
-				if (finalObjective) {
-					await this.#startGoalFromObjective(finalObjective, controller);
-					return;
+			// The interview is a normal conversation: the kickoff rides in as a
+			// hidden developer message, the agent asks its questions as regular
+			// assistant turns, and the user answers in the ordinary editor. Queue
+			// behind an in-flight run instead of aborting it.
+			const interviewPrompt = controller === "zzworkflow" ? zzwGuidedGoalInterviewPrompt : guidedGoalInterviewPrompt;
+			const kickoff = prompt.render(interviewPrompt, { initial: rest?.trim() || undefined });
+			if (this.session.isStreaming) {
+				await this.session.followUp(kickoff, undefined, { synthetic: true });
+			} else {
+				try {
+					await this.session.prompt(kickoff, { synthetic: true });
+				} catch (error) {
+					if (!(error instanceof AgentBusyError)) throw error;
+					await this.session.followUp(kickoff, undefined, { synthetic: true });
 				}
 			}
-			this.showWarning(
-				`목표를 확정하려면 정보가 더 필요합니다. 범위를 좁혀 /${controller === "zzworkflow" ? "zzw-guided-goal" : "guided-goal"}을 다시 실행하세요.`,
-			);
 		} catch (error) {
-			this.cancelGuidedGoalInput();
 			this.showError(error instanceof Error ? error.message : String(error));
 		}
 	}

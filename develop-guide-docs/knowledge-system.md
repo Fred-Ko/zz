@@ -216,6 +216,12 @@ forensic    incident / conflict / recovery
 
 기본적으로 world + experience + observation을 조회하고 `prefer_observations=true`를 사용한다. source facts와 chunks는 caller가 명시한 경우만 포함한다. working-set cache key에 taxonomy와 include option을 빠뜨리면 서로 다른 recall이 같은 캐시를 공유하므로 주의한다.
 
+동시에 여러 Recall이 실행될 때는 **마지막으로 시작한 요청만** 현재 working set을 교체할 수 있다.
+먼저 시작한 planning Recall이 늦게 끝나더라도 더 최신 implementation/replanning Recall을 덮어쓰지
+않는다. 늦은 결과 자체는 호출자에게 반환하고 cache에 저장할 수 있지만 현재 prompt injection 대상은
+아니다. runtime을 닫을 때도 generation을 무효화해 진행 중이던 요청이 working set을 되살리지 못하게
+한다.
+
 ## 8. 명시적 대화 intent
 
 `conversation-intent.ts`는 deterministic candidate detector다. 의미를 최종 결정하거나 자동 retain하지 않는다.

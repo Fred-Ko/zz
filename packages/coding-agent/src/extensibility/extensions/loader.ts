@@ -394,8 +394,12 @@ interface ExtensionManifest {
 
 async function readExtensionManifest(packageJsonPath: string): Promise<ExtensionManifest | null> {
 	try {
-		const pkg = (await Bun.file(packageJsonPath).json()) as { omp?: ExtensionManifest; pi?: ExtensionManifest };
-		const manifest = pkg.omp ?? pkg.pi;
+		const pkg = (await Bun.file(packageJsonPath).json()) as {
+			zz?: ExtensionManifest;
+			omp?: ExtensionManifest;
+			pi?: ExtensionManifest;
+		};
+		const manifest = pkg.zz ?? pkg.omp ?? pkg.pi;
 		if (manifest && typeof manifest === "object") {
 			return manifest;
 		}

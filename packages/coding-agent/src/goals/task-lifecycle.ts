@@ -164,6 +164,7 @@ export type TaskEvidenceStaleReason =
 	| "dependency-invalidated"
 	| "workspace-changed"
 	| "spec-changed"
+	| "execution-contract-changed"
 	| "superseded";
 
 export interface TaskPlanStep {
@@ -3049,6 +3050,7 @@ export class TaskLifecycleRuntime {
 
 	async settleExecutionLane(input: TaskExecutionLaneResult): Promise<ZZWExecutionLane> {
 		if (!this.#state) throw new Error("no active controlled task");
+		const settlementState = this.#state;
 		const lane = this.#state.execution.lanes.find(candidate => candidate.id === input.laneId);
 		if (!lane) throw new Error(`unknown execution lane: ${input.laneId}`);
 		if (lane.status !== "running" && lane.status !== "cancel-requested") {
@@ -3067,6 +3069,23 @@ export class TaskLifecycleRuntime {
 		const workspace = await this.#captureWorkspace();
 		const postStateHash = workspaceStateHash(workspace);
 		const succeeded = !input.cancelled && !input.interrupted && !input.error && input.exitCode === 0;
+		const wave = settlementState.execution.waves.find(candidate => candidate.id === lane.waveId);
+		const currentStep = this.#state?.plan.steps.find(candidate => candidate.id === lane.stepId);
+		const contractCurrent = Boolean(
+			this.#state === settlementState &&
+				wave &&
+				settlementState.execution.activeWaveId === wave.id &&
+				wave.taskId === settlementState.taskId &&
+				wave.attemptId === settlementState.attemptId &&
+				wave.episodeId === settlementState.episodeId &&
+				wave.specVersion === settlementState.specVersion &&
+				wave.planVersion === settlementState.planVersion &&
+				settlementState.plan.status === "current" &&
+				settlementState.plan.approval === "approved" &&
+				currentStep &&
+				currentStep.status === "in_progress" &&
+				(currentStep.contractHash ?? planStepContractHash(currentStep)) === lane.stepContractHash,
+		);
 		operation.status = input.cancelled
 			? "cancelled"
 			: input.interrupted
@@ -3076,6 +3095,19 @@ export class TaskLifecycleRuntime {
 					: "failed";
 		operation.postStateHash = postStateHash;
 		operation.settledAt = now;
+		if (this.#state !== settlementState) {
+			lane.status = "awaiting-reconciliation";
+			lane.error = "Execution Lane result belongs to a ZZWorkflow task that is no longer active.";
+			lane.settledAt = now;
+			this.#persistOperation(operation);
+			await this.#host.flush();
+			await this.#host.syncZZWorkflowOperation?.(
+				cloneState(settlementState),
+				cloneOperation(operation),
+				"operation-settled",
+			);
+			return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+		}
 		const snapshotMatches = postStateHash === lane.baseWorkspaceHash;
 		const verification = operation.evidenceKind === "verification";
 		const evidence: TaskEvidence = {
@@ -3084,20 +3116,24 @@ export class TaskLifecycleRuntime {
 			summary: `${operation.toolName} ${succeeded ? "completed" : input.cancelled ? "cancelled" : "failed"}`,
 			createdAt: now,
 			workspaceHash: postStateHash,
-			stale: verification && !snapshotMatches,
-			staleReason: verification && !snapshotMatches ? "workspace-changed" : undefined,
+			stale: !contractCurrent || (verification && !snapshotMatches),
+			staleReason: !contractCurrent
+				? "execution-contract-changed"
+				: verification && !snapshotMatches
+					? "workspace-changed"
+					: undefined,
 			outcome: verification ? (succeeded ? "passed" : "failed") : succeeded ? "observed" : "failed",
 			validator: operation.validator,
 			verificationIds: [...(operation.verificationIds ?? [])],
-			specVersion: this.#state.specVersion,
-			planVersion: this.#state.planVersion,
+			specVersion: wave?.specVersion ?? settlementState.specVersion,
+			planVersion: wave?.planVersion ?? settlementState.planVersion,
 			planStepId: lane.stepId,
 			operationId: operation.id,
 			toolName: operation.toolName,
 			commandFingerprint: operation.validator ? lifecycleHash(operation.validator) : undefined,
 			resultDigest: input.outputDigest,
 			exitCode: input.exitCode,
-			trust: verification && succeeded && snapshotMatches ? "verified" : "raw",
+			trust: contractCurrent && verification && succeeded && snapshotMatches ? "verified" : "raw",
 			stepContractHash: lane.stepContractHash,
 		};
 		operation.evidenceId = evidence.id;
@@ -3106,9 +3142,11 @@ export class TaskLifecycleRuntime {
 		lane.outputDigest = input.outputDigest;
 		lane.patchPath = input.patchPath ?? lane.patchPath;
 		lane.branchName = input.branchName ?? lane.branchName;
-		lane.error = input.error ?? lane.error;
+		lane.error = !contractCurrent
+			? "Execution Lane result no longer matches the active ZZWorkflow contract."
+			: (input.error ?? lane.error);
 		this.#state.evidence.push(evidence);
-		if (input.planImpact) this.#recordLanePlanImpact(lane, input.planImpact, [evidence.id]);
+		if (contractCurrent && input.planImpact) this.#recordLanePlanImpact(lane, input.planImpact, [evidence.id]);
 		this.#state.workspace = workspace;
 		this.#state.workspaceId = workspace.workspaceId;
 		this.#persistOperation(operation);
@@ -3124,32 +3162,38 @@ export class TaskLifecycleRuntime {
 			});
 			const allSucceeded = operations.every(candidate => candidate.status === "committed");
 			const impactLevel = lane.planImpact?.level ?? "none";
-			lane.status = input.cancelled
-				? "cancelled"
-				: input.interrupted
-					? "interrupted"
-					: impactLevel === "structural" || impactLevel === "contract"
-						? "awaiting-reconciliation"
-						: allSucceeded && impactLevel === "execution"
-							? "rejected"
-							: allSucceeded
-								? lane.executor === "subagent-isolated" && (lane.patchPath || lane.branchName)
-									? lane.reviewRequired && lane.reviewVerdict !== "pass"
-										? "awaiting-review"
-										: (lane.candidateValidators?.length ?? 0) > 0
-											? "awaiting-validation"
-											: "awaiting-integration"
-									: "succeeded"
-								: "failed";
+			lane.status = !contractCurrent
+				? "awaiting-reconciliation"
+				: input.cancelled
+					? "cancelled"
+					: input.interrupted
+						? "interrupted"
+						: impactLevel === "structural" || impactLevel === "contract"
+							? "awaiting-reconciliation"
+							: allSucceeded && impactLevel === "execution"
+								? "rejected"
+								: allSucceeded
+									? lane.executor === "subagent-isolated" && (lane.patchPath || lane.branchName)
+										? lane.reviewRequired && lane.reviewVerdict !== "pass"
+											? "awaiting-review"
+											: (lane.candidateValidators?.length ?? 0) > 0
+												? "awaiting-validation"
+												: "awaiting-integration"
+										: "succeeded"
+									: "failed";
 			lane.settledAt = now;
 		}
 
-		const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
 		if (wave) {
 			if (lane.planImpact?.level === "structural" || lane.planImpact?.level === "contract") {
 				wave.admissionOpen = false;
 			}
 			this.#updateExecutionWave(wave, now);
+		}
+		if (!contractCurrent && this.#state.reconciliation?.laneId === lane.id) {
+			this.#state.reconciliation.classification = "environment-changed";
+			this.#state.reconciliation.requiredAction = this.#state.stalePlan ? "patch-plan" : "classify-result";
+			this.#state.phase = this.#state.stalePlan ? "REPLANNING" : "RECONCILING";
 		}
 		this.#refreshPendingOperations();
 		this.#state.updatedAt = now;

@@ -509,7 +509,7 @@ describe("plugin extension discovery", () => {
 	it("loads installed plugin extensions whose manifest entry points at a directory with index.ts", async () => {
 		const pluginsDir = getPluginsDir();
 		const pluginDir = path.join(pluginsDir, "node_modules", "dir-entry-plugin");
-		const extensionDir = path.join(pluginDir, ".pi", "extensions", "dir-entry");
+		const extensionDir = path.join(pluginDir, ".zz", "extensions", "dir-entry");
 		const extensionPath = path.join(extensionDir, "index.ts");
 		removeSyncWithRetries(path.join(pluginsDir, "node_modules"));
 		fs.mkdirSync(extensionDir, { recursive: true });
@@ -528,9 +528,9 @@ describe("plugin extension discovery", () => {
 			JSON.stringify({
 				name: "dir-entry-plugin",
 				version: "1.0.0",
-				pi: {
+				zz: {
 					// Directory entry — loader must resolve to the directory's index file.
-					extensions: [".pi/extensions/dir-entry"],
+					extensions: [".zz/extensions/dir-entry"],
 				},
 			}),
 		);
@@ -545,7 +545,7 @@ describe("plugin extension discovery", () => {
 
 		const result = await discoverAndLoadExtensions([], projectDir.path());
 		const extension = result.extensions.find(ext => ext.path === extensionPath);
-		const pluginError = result.errors.find(err => err.path.includes(path.join("dir-entry-plugin", ".pi")));
+		const pluginError = result.errors.find(err => err.path.includes(path.join("dir-entry-plugin", ".zz")));
 
 		expect(pluginError).toBeUndefined();
 		expect(extension).toBeDefined();

@@ -10,7 +10,7 @@
 
 ZZWorkflow(약어 ZZW)는 모델의 대화 기억에만 의존하지 않고 코딩 Task를 여러 세션에서 안전하게 이어가기 위한 `zz` 내장 계층이다. 별도 daemon이나 HTTP coordinator는 사용하지 않는다. 현재 상태는 로컬 SQLite registry, Git, operation journal, verification evidence에서 결정하며 Hindsight는 과거 경험을 보조한다.
 
-원본 OMP의 `/goal`과 `/guided-goal`은 ZZW와 독립적으로 동작한다. 이 두 명령에는 Task Contract, Plan DAG, operation journal, 승인 gate 또는 ZZW 모델 도구를 연결하지 않는다. 제어형 작업은 `/zzw-goal` 또는 `/zzw-guided-goal`로만 시작하고 `/zzw`로 관리한다.
+원본 `/goal`과 `/guided-goal`은 ZZW와 독립적으로 동작한다. 이 두 명령에는 Task Contract, Plan DAG, operation journal, 승인 gate 또는 ZZW 모델 도구를 연결하지 않는다. 제어형 작업은 `/zzw-goal` 또는 `/zzw-guided-goal`로만 시작하고 `/zzw`로 관리한다.
 
 핵심 원칙:
 
@@ -93,6 +93,10 @@ resume/recovery test를 함께 갱신한다.
 4. unresolved operation 부재 확인
 5. expected effect와 operation fingerprint 기록
 6. journal flush
+
+extension/config hook이 tool arguments를 수정할 수 있으므로 operation은 최초 모델 인자가 아니라 모든
+hook 교체와 schema 재검증이 끝난 최종 인자를 기록한다. 거절되거나 재검증에 실패한 호출은
+`prepared` operation을 만들지 않는다.
 
 쓰기 후:
 
@@ -274,7 +278,13 @@ verification phase에서는 구현 파일을 수정하지 않는다. 실패를 �
 
 일반 tool result는 `raw` evidence다. 검증 단계의 `validators`에 선언된 bash command와 정규화 후 정확히 일치하고, exit code가 0이며, 현재 Spec/Plan/step/workspace snapshot에 연결된 경우에만 `verified` evidence가 된다. 검증 단계 자체는 `zzw_submit_verification`이 이 증거를 확인한 뒤에만 완료된다. 과거 버전에서 provenance 없이 저장한 verification은 `legacy-untrusted`로 취급한다.
 
-Plan 버전이 증가해도 step contract hash, upstream dependency, Specification과 workspace가 같으면 해당 evidence는 유지할 수 있다. stale evidence에는 `step-contract-changed`, `dependency-invalidated`, `workspace-changed`, `spec-changed`, `superseded` 원인을 남겨 필요한 validation closure만 다시 실행한다.
+Plan 버전이 증가해도 step contract hash, upstream dependency, Specification과 workspace가 같으면 해당 evidence는 유지할 수 있다. stale evidence에는 `step-contract-changed`, `dependency-invalidated`, `workspace-changed`, `spec-changed`, `execution-contract-changed`, `superseded` 원인을 남겨 필요한 validation closure만 다시 실행한다.
+
+Wave/Lane은 비동기로 끝날 수 있으므로 settlement 시 task, attempt, episode, Spec/Plan version, 승인 상태,
+active Wave와 step contract hash를 다시 확인한다. 실행 도중 계약이 바뀌었다면 실제 operation 결과는
+장부에 남기되 해당 evidence를 `raw + stale`로 격리하고 Lane을 `awaiting-reconciliation`으로 보낸다.
+과거 계약에서 exit code 0이 나왔다는 이유로 현재 step을 완료하거나 verification을 `verified`로
+승격하지 않는다.
 
 내장 스킬 `zzw-plan-evolution`, `zzw-reconciliation`, `zzw-verification`은 이 절차를 모델에 상황별로 제공한다. 강제 규칙은 스킬이 아니라 Runtime에 남는다.
 

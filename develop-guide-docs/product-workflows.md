@@ -72,6 +72,11 @@ rough objective
 script나 기존 ORM 식별자는 먼저 `package.json`과 코드를 조사한다. 사용자에게는 제품 동작,
 scope, 복구 곤란한 선택, 완료 기준처럼 실제 결정을 바꾸는 질문만 한다.
 
+`/guided-goal`과 `/zzw-guided-goal`의 인터뷰는 별도 modal이나 숨은 side session이 아니라 일반 대화
+history에서 한 질문씩 진행한다. 전자는 원본 Goal을 만들고, 후자는 같은 인터뷰 UX를 사용하되 마지막에
+`controller=zzworkflow`로 Task Contract를 정확히 한 번 생성한다. 인터뷰 중에는 Plan 제안이나
+side effect를 시작하지 않는다.
+
 ### 4.2 목표와 기준이 이미 명확하다면
 
 ```text

@@ -356,11 +356,11 @@ describe("listClaudePluginRoots", () => {
 		expect(result.roots).toHaveLength(1);
 		expect(result.roots[0].scope).toBe("user");
 	});
-	test("reads skills directory from plugin manifest skills field", async () => {
+	test("reads skills directory from canonical ZZ plugin manifest", async () => {
 		const pluginsDir = path.join(tempDir, ".claude", "plugins");
 		const pluginPath = path.join(tempDir, "plugins", "manifest-skills");
 		await fs.mkdir(path.join(pluginsDir), { recursive: true });
-		await fs.mkdir(path.join(pluginPath, ".claude-plugin"), { recursive: true });
+		await fs.mkdir(path.join(pluginPath, ".zz-plugin"), { recursive: true });
 		await fs.mkdir(path.join(pluginPath, ".claude", "skills", "manifest-skill"), { recursive: true });
 
 		const registry = {
@@ -380,7 +380,7 @@ describe("listClaudePluginRoots", () => {
 
 		await fs.writeFile(path.join(pluginsDir, "installed_plugins.json"), JSON.stringify(registry));
 		await fs.writeFile(
-			path.join(pluginPath, ".claude-plugin", "plugin.json"),
+			path.join(pluginPath, ".zz-plugin", "plugin.json"),
 			JSON.stringify({ skills: "./.claude/skills" }),
 		);
 		await fs.writeFile(
@@ -489,6 +489,171 @@ describe("listClaudePluginRoots", () => {
 			if (originalUrl === undefined) delete process.env.OMP_PLUGIN_MCP_URL;
 			else process.env.OMP_PLUGIN_MCP_URL = originalUrl;
 		}
+	});
+
+	test("uses ZZ then compatibility manifests before .mcp.json", async () => {
+		const pluginsDir = path.join(tempDir, ".claude", "plugins");
+		const zzPluginPath = path.join(tempDir, "plugins", "zz-pointer");
+		const claudePluginPath = path.join(tempDir, "plugins", "claude-pointer");
+		await fs.mkdir(pluginsDir, { recursive: true });
+		await Promise.all([
+			fs.mkdir(path.join(zzPluginPath, ".zz-plugin"), { recursive: true }),
+			fs.mkdir(path.join(zzPluginPath, ".omp-plugin"), { recursive: true }),
+			fs.mkdir(path.join(zzPluginPath, ".claude-plugin"), { recursive: true }),
+			fs.mkdir(path.join(claudePluginPath, ".claude-plugin"), { recursive: true }),
+		]);
+		await fs.writeFile(
+			path.join(pluginsDir, "installed_plugins.json"),
+			JSON.stringify({
+				version: 2,
+				plugins: {
+					"zz-pointer@market": [
+						{
+							scope: "user",
+							installPath: zzPluginPath,
+							version: "1.0.0",
+							installedAt: "2026-07-28T00:00:00Z",
+							lastUpdated: "2026-07-28T00:00:00Z",
+						},
+					],
+					"claude-pointer@market": [
+						{
+							scope: "user",
+							installPath: claudePluginPath,
+							version: "1.0.0",
+							installedAt: "2026-07-28T00:00:00Z",
+							lastUpdated: "2026-07-28T00:00:00Z",
+						},
+					],
+				},
+			}),
+		);
+		await Promise.all([
+			fs.writeFile(
+				path.join(zzPluginPath, ".zz-plugin", "plugin.json"),
+				JSON.stringify({ mcpServers: "./mcp-zz.json" }),
+			),
+			fs.writeFile(
+				path.join(zzPluginPath, ".omp-plugin", "plugin.json"),
+				JSON.stringify({ mcpServers: "./mcp-compat.json" }),
+			),
+			fs.writeFile(
+				path.join(zzPluginPath, ".claude-plugin", "plugin.json"),
+				JSON.stringify({ mcpServers: "./mcp-claude.json" }),
+			),
+			fs.writeFile(path.join(zzPluginPath, "mcp-zz.json"), JSON.stringify({ "from-zz": { command: "zz" } })),
+			fs.writeFile(
+				path.join(zzPluginPath, "mcp-compat.json"),
+				JSON.stringify({ "from-compat": { command: "compat" } }),
+			),
+			fs.writeFile(
+				path.join(zzPluginPath, "mcp-claude.json"),
+				JSON.stringify({ "from-claude": { command: "claude" } }),
+			),
+			fs.writeFile(path.join(zzPluginPath, ".mcp.json"), JSON.stringify({ "from-root": { command: "root" } })),
+			fs.writeFile(
+				path.join(claudePluginPath, ".claude-plugin", "plugin.json"),
+				JSON.stringify({ mcpServers: "./mcp-claude.json" }),
+			),
+			fs.writeFile(
+				path.join(claudePluginPath, "mcp-claude.json"),
+				JSON.stringify({ "from-claude": { command: "claude" } }),
+			),
+			fs.writeFile(path.join(claudePluginPath, ".mcp.json"), JSON.stringify({ "from-root": { command: "root" } })),
+		]);
+
+		const result = await loadCapability<MCPServer>(mcpCapability.id, {
+			cwd: tempDir,
+			providers: ["claude-plugins"],
+		});
+
+		expect(result.warnings).toEqual([]);
+		expect(result.all.map(server => server.name).sort()).toEqual([
+			"claude-pointer:from-claude",
+			"zz-pointer:from-zz",
+		]);
+	});
+
+	test("loads inline manifest mcpServers object and roots relative stdio at plugin root", async () => {
+		const pluginsDir = path.join(tempDir, ".claude", "plugins");
+		const pluginPath = path.join(tempDir, "plugins", "inline-mcp");
+		await fs.mkdir(pluginsDir, { recursive: true });
+		await fs.mkdir(path.join(pluginPath, ".omp-plugin"), { recursive: true });
+		await fs.writeFile(
+			path.join(pluginsDir, "installed_plugins.json"),
+			JSON.stringify({
+				version: 2,
+				plugins: {
+					"inline-mcp@market": [
+						{
+							scope: "user",
+							installPath: pluginPath,
+							version: "1.0.0",
+							installedAt: "2026-07-28T00:00:00Z",
+							lastUpdated: "2026-07-28T00:00:00Z",
+						},
+					],
+				},
+			}),
+		);
+		// Inline object form: the manifest carries the server map directly, and no
+		// root .mcp.json exists, so the pre-fix fallback would register nothing.
+		await fs.writeFile(
+			path.join(pluginPath, ".omp-plugin", "plugin.json"),
+			JSON.stringify({ mcpServers: { local: { command: "./bin/server", args: ["run"] } } }),
+		);
+
+		const result = await loadCapability<MCPServer>(mcpCapability.id, {
+			cwd: tempDir,
+			providers: ["claude-plugins"],
+		});
+
+		expect(result.warnings).toEqual([]);
+		const server = result.all.find(item => item.name === "inline-mcp:local");
+		expect(server).toBeDefined();
+		expect(server?.command).toBe(path.join(pluginPath, "bin", "server"));
+		expect(server?.args).toEqual(["run"]);
+	});
+
+	test("warns when a manifest mcpServers pointer names a missing file", async () => {
+		const pluginsDir = path.join(tempDir, ".claude", "plugins");
+		const pluginPath = path.join(tempDir, "plugins", "broken-pointer");
+		await fs.mkdir(pluginsDir, { recursive: true });
+		await fs.mkdir(path.join(pluginPath, ".omp-plugin"), { recursive: true });
+		await fs.writeFile(
+			path.join(pluginsDir, "installed_plugins.json"),
+			JSON.stringify({
+				version: 2,
+				plugins: {
+					"broken-pointer@market": [
+						{
+							scope: "user",
+							installPath: pluginPath,
+							version: "1.0.0",
+							installedAt: "2026-07-28T00:00:00Z",
+							lastUpdated: "2026-07-28T00:00:00Z",
+						},
+					],
+				},
+			}),
+		);
+		// Pointer names a file the plugin never shipped: discovery must say so
+		// instead of silently registering nothing.
+		await fs.writeFile(
+			path.join(pluginPath, ".omp-plugin", "plugin.json"),
+			JSON.stringify({ mcpServers: "./mcp-legacy.json" }),
+		);
+		await fs.writeFile(path.join(pluginPath, ".mcp.json"), JSON.stringify({ "from-root": { command: "root" } }));
+
+		const result = await loadCapability<MCPServer>(mcpCapability.id, {
+			cwd: tempDir,
+			providers: ["claude-plugins"],
+		});
+
+		expect(result.all.map(server => server.name)).toEqual([]);
+		expect(result.warnings).toEqual([
+			`[Claude Code Marketplace] [claude-plugins] Missing mcpServers file declared by broken-pointer@market: ${path.join(pluginPath, "mcp-legacy.json")}`,
+		]);
 	});
 
 	test("deduplicates a plugin alias of a directly configured MCP connection", async () => {

@@ -5,7 +5,7 @@ description: Use when creating a new zz extension. Covers ExtensionAPI, factory 
 
 # Authoring Extensions
 
-Extensions are the primary way to add capabilities to `oh-my-pi`. A single extension module can register tools the LLM can call, slash commands users can invoke, and event handlers that run throughout the session lifecycle — all from one TypeScript file.
+Extensions are the primary way to add capabilities to ZZ. A single extension module can register tools the LLM can call, slash commands users can invoke, and event handlers that run throughout the session lifecycle — all from one TypeScript file.
 
 ## Minimum viable extension
 
@@ -81,20 +81,20 @@ zz loads extension modules from these sources:
    - `<cwd>/.zz/extensions/`
    - `~/.zz/agent/extensions/`
    - legacy extension paths listed in `.zz/settings.json#extensions` or `~/.zz/agent/settings.json#extensions`
-2. Installed plugins under `~/.zz/plugins/node_modules` (`zz plugin install` npm/git specs, or `zz plugin link`) via their `omp.extensions`/`pi.extensions` manifests. Marketplace cache installs do not feed extension modules — they surface skills/commands/hooks/tools/MCP only.
+2. Installed plugins under `~/.zz/plugins/node_modules` (`zz plugin install` npm/git specs, `zz plugin link`, or marketplace installs) via `zz.extensions`. The legacy `omp.extensions` and `pi.extensions` keys remain readable for compatibility.
 3. Explicit configured paths passed by the CLI (`zz --extension ./my-ext.ts`, also `-e`; `--hook` is treated as an alias) and by the `extensions:` setting in config.
 
 The runtime de-duplicates by resolved absolute path — first seen wins.
 
 When a path points to a directory, zz resolves the entry point in this order:
 
-1. `package.json` with `omp.extensions` (or legacy `pi.extensions`) field
+1. `package.json` with `zz.extensions` (or compatibility `omp.extensions`/`pi.extensions`) field
 2. `index.ts`
 3. `index.js`
 
 When scanning an `extensions/` directory, zz also loads direct `*.ts`/`*.js` files and one-level subdirectories that have `index.ts`, `index.js`, or a manifest.
 
-Extension packages can also bundle sibling capability directories. When a package is loaded through `extensions:` or `--extension`/`-e`, the `omp-plugins` provider discovers its `skills/`, `hooks/pre|post/`, `tools/`, `commands/`, `rules/`, `prompts/`, and `.mcp.json`.
+Extension packages can also bundle sibling capability directories. When a package is loaded through `extensions:` or `--extension`/`-e`, the plugin capability provider discovers its `skills/`, `hooks/pre|post/`, `tools/`, `commands/`, `rules/`, `prompts/`, and `.mcp.json`.
 
 ## package.json manifest
 
@@ -109,11 +109,11 @@ To package an extension as an installable plugin, add an `zz` field to `package.
 }
 ```
 
-The legacy `pi` key is also accepted for backwards compatibility:
+The legacy `omp` and `pi` keys are also accepted for backwards compatibility:
 
 ```json
 {
-  "pi": {
+  "omp": {
     "extensions": ["./index.ts"]
   }
 }

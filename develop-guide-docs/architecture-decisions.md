@@ -16,7 +16,7 @@
 
 - 상태: 채택
 - 결정: 공개 이름, CLI, 설정 경로, 프로젝트 자산은 `ZZ`, `zz`, `~/.zz`, `.zz/`를 사용한다.
-- 근거: 사용자가 fork의 기능과 설정을 upstream OMP와 명확히 구분할 수 있어야 한다.
+- 근거: 사용자가 fork의 기능과 설정을 upstream 프로젝트와 명확히 구분할 수 있어야 한다.
 - 제약: package scope, worker selector, wire protocol 같은 내부 호환 식별자는 변경 비용을 검토한
   뒤에만 바꾼다.
 
@@ -324,6 +324,26 @@
   저장된 draft Plan은 `/zzw approve-plan`에서 기존 executor와 권한 envelope를 보존하는 판단
   메타데이터만 정규화한 뒤 승인한다. 새 Plan 제안의 누락은 계속 거절한다. 이미 실행 중인 승인 Plan은
   현재 단계를 취소하지 않고 settle 뒤 최소 Plan patch로 남은 pending 단계 판단을 보완한다.
+
+## D-030 — 비동기 결과는 시작 계약을 다시 검증한 뒤에만 현재 상태로 승격한다
+
+- 상태: 채택
+- 문제: Lane 실행이나 Hindsight Recall이 진행되는 동안 Task Contract, Plan, episode 또는 Recall 목적이
+  바뀌면 먼저 시작한 결과가 나중에 도착할 수 있다.
+- ZZW 결정: settlement 시 task/attempt/episode, Spec/Plan version, 승인, active Wave와 step contract를
+  다시 대조한다. 달라진 결과는 operation 사실로 보존하되 stale evidence와 reconciliation으로 격리한다.
+- Knowledge 결정: Recall generation은 마지막으로 시작한 요청만 current working set을 publish하게 한다.
+  늦은 이전 결과는 호출 결과/cache일 수 있지만 prompt working set을 덮어쓰지 않는다.
+- 근거: 비동기 실행의 처리 순서를 권위 있는 현재 상태의 시간 순서로 오인하지 않기 위함이다.
+
+## D-031 — ZZ plugin namespace가 우선이고 기존 namespace는 호환용이다
+
+- 상태: 채택
+- 결정: 새 catalog와 plugin manifest는 `.zz-plugin/`과 `package.json#zz`를 사용한다. runtime은 기존
+  설치 자산을 위해 legacy catalog path와 `omp`/`pi` manifest key를 뒤순위로 계속 읽는다.
+- 근거: 새 사용자 표면은 ZZ 정체성을 일관되게 보여야 하지만 기존 확장 생태계를 불필요하게 깨뜨리면
+  안 된다.
+- 결과: discovery, installer, manager와 문서 예제는 `zz → compatibility aliases` 우선순위를 공유한다.
 
 ## 결정 변경 절차
 

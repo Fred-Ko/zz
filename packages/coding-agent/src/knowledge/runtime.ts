@@ -400,6 +400,7 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 	#workingSet: KnowledgeWorkingSet | undefined;
 	#providerActivity: KnowledgeProviderActivity | undefined;
 	#flushPromise: Promise<void> | undefined;
+	#recallGeneration = 0;
 	#closed = false;
 
 	constructor(options: CreateKnowledgeRuntimeOptions) {
@@ -543,6 +544,7 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 	}
 
 	async recall(input: KnowledgeRecallInput): Promise<KnowledgeWorkingSet> {
+		const recallGeneration = ++this.#recallGeneration;
 		const queryHash = hash(input.query);
 		const scopeHash = hash({
 			scope: input.scope,
@@ -565,8 +567,9 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 		});
 		const cached = this.#store.getWorkingSet(cacheKey);
 		if (cached) {
-			this.#workingSet = { ...cached, cached: true };
-			return this.#workingSet;
+			const workingSet = { ...cached, cached: true };
+			this.#publishWorkingSet(recallGeneration, workingSet);
+			return workingSet;
 		}
 		const base: Omit<KnowledgeWorkingSet, "content"> = {
 			id: `working-set-${cacheKey}`,
@@ -580,7 +583,7 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 		};
 		if (!this.#config.enabled || this.#closed) {
 			const disabled = { ...base, degraded: false };
-			this.#workingSet = disabled;
+			this.#publishWorkingSet(recallGeneration, disabled);
 			return disabled;
 		}
 		try {
@@ -626,7 +629,7 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 				workingSet,
 				Date.now() + this.#config.workingSetTtlMs,
 			);
-			this.#workingSet = workingSet;
+			this.#publishWorkingSet(recallGeneration, workingSet);
 			this.#recordProviderActivity("recall");
 			return workingSet;
 		} catch (error) {
@@ -637,9 +640,13 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 				repoId: input.identity.repoId,
 			});
 			const degraded = { ...base, degraded: true };
-			this.#workingSet = degraded;
+			this.#publishWorkingSet(recallGeneration, degraded);
 			return degraded;
 		}
+	}
+
+	#publishWorkingSet(recallGeneration: number, workingSet: KnowledgeWorkingSet): void {
+		if (!this.#closed && recallGeneration === this.#recallGeneration) this.#workingSet = workingSet;
 	}
 
 	async retain(input: KnowledgeRetainInput): Promise<KnowledgeRetainReceipt> {
@@ -1024,6 +1031,7 @@ export class ZzKnowledgeRuntime implements KnowledgeRuntime {
 		if (this.#closed) return;
 		await this.flushOutbox();
 		this.#closed = true;
+		this.#recallGeneration++;
 		this.#store.close();
 	}
 }

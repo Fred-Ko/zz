@@ -17,6 +17,8 @@
 
 ### Changed
 
+- Changed standalone HTML exports to persist viewer theme state under the ZZ-native `zz-export-theme` key.
+- Changed plugin discovery, installation, linking, and marketplace examples to prefer the ZZ-native `.zz-plugin` and `package.json#zz` namespaces while retaining legacy manifest aliases for compatibility.
 - Changed Work Unit delegation from optional prompt advice into an explicit Plan decision: enabled workflows now reject unassessed work steps, inject live execution/reviewer policy into authoritative context and state reads, expose delegation counts in `/zzw status` and `/zzw plan`, and adversarially review every isolated-write candidate independently of capability and scheduling mode.
 - Changed ZZW model routing to one Work Unit/repair selector and one independent adversarial reviewer selector. Each picker now combines the current session's authenticated model choices with only that model's supported efforts; `*` and `*:effort` resolve to exact active `provider/model[:effort]` contracts at Wave preparation, while stale, unsupported, logged-out, disabled, or out-of-scope choices block execution instead of silently falling back.
 - Changed the detailed status line from four dense icon rows into a labeled semantic dashboard for workflow, task, model, workspace, Git, context, tokens, billing, and session state. Active ZZW tasks now show their current Plan step and live activity on dedicated rows, while duplicate context-window and token-total values are suppressed.
@@ -27,6 +29,9 @@
 
 ### Fixed
 
+- Fixed a completed Goal leaving the `goal` tool active after the exit event had already disabled Goal mode. Exiting now restores the exact pre-Goal tool set before the next turn is built.
+- Fixed hook-rewritten tool calls being journaled with their original arguments. ZZWorkflow now prepares operations only after all argument replacements pass schema validation, so approval, execution, and recovery observe the same final input.
+- Fixed late Execution Lane results and Hindsight Recall responses overwriting newer contracts. Lane evidence is quarantined when its task/episode/Plan/step anchor changed, while only the latest Recall request may publish the current Knowledge working set.
 - Fixed `/zzw approve-plan` crashing with `DELEGATION_ASSESSMENT_MISSING` when Work Unit policy was enabled after a draft Plan had already been persisted. Approval now preserves the existing executor and authority envelope while filling only the missing compatibility assessment, and command failures render as TUI diagnostics instead of unhandled promise rejections.
 - Fixed approved validation-environment recovery repeatedly becoming material Plan patches. Equivalent exact-validator replacements now inherit the existing authority envelope, `supersedes` automatically retires the failed node, and missing validation prerequisites can be prepared and evidenced inside the approved step before retrying without another user approval.
 - Fixed accepted ZZWorkflow Plan proposals leaving the same provider loop alive, which made the agent attempt execution before approval and then repeat safety blocks, Todo reminders, and approval instructions. Initial and material Plan proposals now end at an exclusive host-owned approval boundary, while invalid proposals and approval-preserving structural patches remain repairable in the same turn.
@@ -42,7 +47,65 @@
 ### Removed
 
 - Removed the separate `zz-workflowd` package and command, HTTP coordinator transport and outbox, cross-machine identity and checkpoint transport, and their retired settings.
-- Removed the complete upstream OMP Memory stack, including Mnemopi, local and Hindsight memory backends, autolearn, transcript auto-retain/auto-recall, legacy memory settings, commands, tools, prompts, internal URLs, and Mnemopi-only native vector exports.
+- Removed the complete upstream legacy Memory stack, including Mnemopi, local and Hindsight memory backends, autolearn, transcript auto-retain/auto-recall, legacy memory settings, commands, tools, prompts, internal URLs, and Mnemopi-only native vector exports.
+## [17.1.8] - 2026-07-28
+
+### Breaking Changes
+
+- Changed tab.screenshot() to no longer accept a per-call save path; it now saves screenshots under browser.screenshotDir (or the OS temp directory if unset) and returns the saved path.
+
+### Added
+
+- Added omp cleanse, a new command that automatically detects language-ecosystem checkers, parses diagnostics (such as Cargo Clippy JSON), distributes repair workloads across concurrent subagents, and runs verification checks with a live progress bar.
+
+### Changed
+
+- Reworked the /guided-goal command from a modal-based popup flow into a natural, conversational chat interface where the agent asks follow-up questions directly in the session.
+- Reduced startup memory usage by lazy-loading HTML session export assets only on their first use.
+
+### Fixed
+
+- Fixed Advisor notes appending stale-review-window warnings when newer primary turns are queued during a review.
+- Fixed layout padding alignment issues in bordered output blocks and web-search result panels.
+- Fixed excluded web search providers remaining visible in the Web Search Provider Order settings list.
+- Fixed internal Hub peer messages being exposed as ordinary tool-call updates in clients like Paseo.
+- Fixed compatibility issues when installing legacy pi extensions by updating the legacy shim to correctly bridge missing runtime symbols and exports (such as isContextOverflow, isRetryableAssistantError, and JSON parsing utilities).
+- Fixed an issue where routine daemon operations (like list, logs, stop, or describe) could inadvertently trigger a restart loop for detached daemons in a backoff window.
+- Fixed marketplace plugin MCP discovery to correctly honor the mcpServers manifest field in plugin configuration files.
+- Fixed user-initiated shell executions (! and $) being misattributed as agent actions in advisor transcripts.
+- Fixed unnecessary prompt-cache invalidations by preserving the active auto-thinking effort level when per-turn classification fails.
+- Fixed the omp process name showing up as bun in Linux process managers (like ps and top).
+- Fixed agent shell commands inheriting environment variables from the launch directory's .env file, ensuring they only receive the parent environment and explicit tool overrides.
+- Fixed the /new command retaining completed or failed async jobs from the previous session.
+- Improved error handling in omp update to display a friendly timeout message if the download times out while streaming the binary.
+- Fixed the write tool incorrectly treating semicolon-joined read selectors as filesystem paths and creating unintended directory structures.
+- Fixed omp worktree clear prematurely deleting active task-isolation sandboxes owned by running subagents.
+- Fixed /vibe mode preventing the director from completing parent tasks after verifying worker results by keeping the built-in todo tool active.
+- Fixed numeric GitHub issue and pull request autocomplete being suppressed inside skill slash-command arguments.
+
+## [17.1.7] - 2026-07-27
+
+### Fixed
+
+- Restoring a prompt with image attachments via esc-esc branch or `/tree` now re-attaches the images to the composer draft: previously only the text (with its `[Image #N]` markers) was restored, so resubmitting sent the literal marker with no image.
+- Fixed large bash/eval/ssh output citing two different artifact ids in one result — the truncation notice said `Read artifact://N for full output` while the footer said `Artifact: N+1`. The streaming sink's head and tail windows each had a full budget, so a middle-elided inline body could reach `headBytes + spillThreshold` and always re-tripped the final-defense inline byte cap, which truncated a second time (two elision markers), saved a duplicate already-truncated artifact, and left the notice's line ranges stale. The head and tail windows now share the spill-threshold budget (head clamped to half), the cap budget derives from the configured threshold plus notice slack, and when the cap does fire on a sink-spilled result it references the existing raw artifact instead of saving a copy.
+
+### Added
+
+- Added the bundled `ts-no-local-is-record` TTSR rule, which catches local `isRecord` function and lambda definitions and directs agents to shared guards plus explicit shape validation.
+- A `tool_call` handler (extension or hook) can now return `input` to revise the arguments a tool executes with, not just `block` it. The returned object is the raw execution input passed to the tool (ignored when `block` is set, and not applied to `computer` tool calls), enabling wrappers that normalize or rewrite a built-in's arguments without reimplementing the tool. For model-issued calls the event fires at arg-prep time in the agent loop, so a revision is revalidated against the tool schema and is what concurrency scheduling, `tool_execution_start`/transcripts, the persisted assistant message, and the approval gate all observe — the user approves exactly what runs, and a revision that changes a tool's functional concurrency (e.g. bash `pty`) schedules correctly. A revised nested `write xd://` device dispatch forfeits the outer write gate's approval and faces the full prompt again ([#6681](https://github.com/can1357/oh-my-pi/pull/6681) by [@psyrendust](https://github.com/psyrendust)).
+- Added a parser for macOS `sample`(1) call-tree reports to the read tool: `*.sample.txt` reads now return a compact bottleneck summary — per-thread hot paths with on-CPU sample counts (blocked syscall time excluded), demangled Rust v0/legacy symbols, flattened direct recursion, merged call-site siblings, idle-thread classification, and a process-wide top-functions-by-self-samples table. `:raw` still reads the original report, and files that merely carry the extension fall back to plain text.
+- Added V8 `.cpuprofile` support to the read tool (Node/Bun `--cpu-prof`, Chrome DevTools, CDP `Profiler.stop` output): reads now return a compact bottleneck summary — hot-path call tree with on-CPU milliseconds (`(idle)` time excluded), collapsed pass-through chains, flattened direct recursion, shortened file URLs, and a top-functions-by-self-time table. `:raw` still reads the original JSON, and files that merely carry the extension fall back to plain text.
+
+### Changed
+
+- Direct and `xd://` dispatch now share one canonical tool map: `write xd://<tool>` executes any enabled top-level or mounted tool, and `read xd://<tool>` returns its docs, instead of failing when the name was exposed through the other layer. Mounted names are presentation metadata only, so tool replacement and disconnection cannot leave stale device instances; disabled tools remain unreachable, and both `xd://` and Cursor/top-level fallback execution retain the tool's approval and ACP permission gates.
+- Session listing now caches parsed headers keyed on file stat identity (mtime + size), so repeated resume-picker opens and startup scans re-read only changed session files
+- Reduced per-keystroke editor dispatch overhead: keybinding resolution happens once per input chunk and the per-action interception chain is gated behind a single canonical-key set probe
+- `xd://` device docs now render the parameter schema as a comment-annotated TypeScript type (via `jsonSchemaToTypeScript`, the same renderer the in-band tool inventory uses) instead of a raw JSON Schema dump, shrinking system-prompt device sections while keeping descriptions inline.
+- Added a `/vision [on|off|auto|status]` slash command for session-scoped control of the `inspect_image` vision-delegation tool, modeled on `/computer`: `on`/`off` force the tool for the current session only, `auto` returns to the persisted setting, and `status` reports the effective mode, session override, tool state, and active-model image capability.
+- Replaced the `inspect_image.enabled` boolean with the tri-state `inspect_image.mode` (`auto`|`on`|`off`, default `auto`). In `auto` the tool is registered only when the active model lacks native image input, so vision-capable models (e.g. `kimi-code/k3`) read images inline with their own capabilities instead of delegating to a separate vision model; the tool set is re-evaluated on every model switch with a status notice when it flips. The `read` tool now follows the effective state dynamically rather than the raw setting, so it returns decoded image blocks again whenever `inspect_image` is hidden. Existing `inspect_image.enabled: true/false` configs migrate to `inspect_image.mode: on/off`.
+
 ## [17.1.6] - 2026-07-27
 
 ### Added

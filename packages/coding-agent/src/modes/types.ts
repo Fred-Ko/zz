@@ -431,10 +431,6 @@ export interface InteractiveModeContext {
 	handleGuidedGoalCommand(rest?: string): Promise<void>;
 	handleZZWorkflowGoalCommand(rest?: string): Promise<void>;
 	handleZZWorkflowGuidedGoalCommand(rest?: string): Promise<void>;
-	/** Consume one answer while `/guided-goal` is waiting on the main editor. */
-	submitGuidedGoalInput?(text: string): boolean;
-	/** Cancel the active `/guided-goal` editor wait, if one exists. */
-	cancelGuidedGoalInput?(): boolean;
 	handleLoopCommand(args?: string): Promise<string | undefined>;
 	setLoopPrompt(prompt: string): void;
 	disableLoopMode(): void;

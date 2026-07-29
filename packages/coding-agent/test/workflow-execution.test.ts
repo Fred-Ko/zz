@@ -1203,6 +1203,54 @@ describe("ZZWorkflow execution journal", () => {
 		expect(runtime.state?.plan.steps.find(step => step.id === "verify")?.status).toBe("completed");
 	});
 
+	it("quarantines a Lane result that arrives after the approved task contract changed", async () => {
+		const { runtime } = await createRuntime([workStep(), validationStep()]);
+		await completePrimaryWork(runtime);
+		const prepared = await runtime.prepareExecutionWave({
+			mode: "validation",
+			validationConcurrency: 1,
+			subagentConcurrency: 1,
+			stepIds: ["verify"],
+		});
+		const lane = prepared.lanes[0];
+		await runtime.markExecutionLaneRunning(lane.id);
+
+		const previousGoal = goal();
+		await runtime.handleGoalEvent({
+			type: "revised",
+			previousGoal,
+			goal: { ...previousGoal, objective: `${previousGoal.objective}\n- Preserve public output.`, updatedAt: 2 },
+		});
+		const settled = await runtime.settleExecutionLane({
+			laneId: lane.id,
+			validator: "bun check",
+			exitCode: 0,
+			outputDigest: "passed-against-old-contract",
+		});
+
+		expect(settled).toMatchObject({
+			status: "awaiting-reconciliation",
+			error: "Execution Lane result no longer matches the active ZZWorkflow contract.",
+		});
+		const evidence = runtime.state?.evidence.find(item => item.id === settled.evidenceIds[0]);
+		expect(evidence).toMatchObject({
+			stale: true,
+			staleReason: "execution-contract-changed",
+			trust: "raw",
+			specVersion: 1,
+			planVersion: prepared.wave.planVersion,
+		});
+		expect(runtime.state).toMatchObject({
+			phase: "REPLANNING",
+			stalePlan: true,
+			reconciliation: {
+				laneId: lane.id,
+				classification: "environment-changed",
+				requiredAction: "patch-plan",
+			},
+		});
+	});
+
 	it("finalizes a fully recorded successful Wave after restart without rerunning validators", async () => {
 		const state = await createRuntime([workStep(), validationStep(["bun check", "bun test"])]);
 		await completePrimaryWork(state.runtime);

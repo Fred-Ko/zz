@@ -19,6 +19,7 @@ const goalSchema = type({
 	op: type("'create' | 'get' | 'complete' | 'resume' | 'revise' | 'recover' | 'drop'").describe("goal operation"),
 	"objective?": type("string").describe("goal objective"),
 	"token_budget?": type("number.integer").describe("token budget"),
+	"controller?": type("'goal' | 'zzworkflow'").describe("goal controller; omit for ordinary Goal"),
 	"operation_id?": type("string").describe("prepared operation id"),
 	"resolution?": type("'committed' | 'failed' | 'compensated'").describe("inspected operation outcome"),
 });
@@ -112,7 +113,10 @@ export class GoalTool implements AgentTool<typeof goalSchema, GoalToolDetails> {
 
 		let response: GoalToolResponse;
 		if (params.op === "create") {
-			const created = await runtime.createGoal(validateObjectiveParams(params, "create"));
+			const created = await runtime.createGoal({
+				...validateObjectiveParams(params, "create"),
+				...(params.controller ? { controller: params.controller } : {}),
+			});
 			response = buildGoalToolResponse(created.goal);
 		} else if (params.op === "revise") {
 			const revised = await runtime.reviseGoal(validateObjectiveParams(params, "revise"));

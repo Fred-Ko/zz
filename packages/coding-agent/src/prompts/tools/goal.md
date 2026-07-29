@@ -1,7 +1,7 @@
 Manage the active goal-mode objective.
 
 Use a single `op` field:
-- `create` starts a goal. Requires `objective`; optional `token_budget` must be positive. Use only when no goal exists and no goal is paused.
+- `create` starts a goal and enables goal mode. Requires `objective`; optional `token_budget` must be positive. Use only when no goal exists and no goal is paused. Omit `controller` for ordinary Goal; use `controller: "zzworkflow"` only when the `/zzw-guided-goal` interview explicitly instructs you to create a controlled ZZWorkflow goal.
 - `get` returns the current goal (active or paused) and remaining token budget.
 - `resume` re-activates a paused goal so work can continue.
 - `revise` updates the current unfinished goal in place after a user requirement change. Requires `objective`; optional `token_budget` must be positive. This increments the task specification and plan versions and invalidates affected evidence.

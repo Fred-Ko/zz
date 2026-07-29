@@ -1,6 +1,6 @@
 # mini-marketplace
 
-A minimal `oh-my-pi` marketplace catalog that demonstrates the `marketplace.json` format. It lists one plugin (`my-plugin`) using a relative path source.
+A minimal ZZ marketplace catalog that demonstrates the `marketplace.json` format. It lists one plugin (`my-plugin`) using a relative path source.
 
 ## Install command
 
@@ -27,12 +27,14 @@ zz plugin install my-plugin@example-marketplace
 
 ```
 mini-marketplace/
+  .zz-plugin/
+    marketplace.json      ← canonical ZZ catalog
   .claude-plugin/
-    marketplace.json      ← catalog
+    marketplace.json      ← Claude-compatible mirror
   README.md
   my-plugin/
-    package.json          ← omp.extensions manifest
+    package.json          ← zz.extensions manifest
     index.ts              ← extension entry point
 ```
 
-Published and local marketplaces use the same catalog location. zz loads `.omp-plugin/marketplace.json` first and falls back to `.claude-plugin/marketplace.json` (the Claude Code-compatible path this example ships) inside the marketplace root. Point `/marketplace add` at this folder to load the example.
+Published and local marketplaces use the same catalog location. ZZ loads `.zz-plugin/marketplace.json` first, then the legacy compatibility path, and finally `.claude-plugin/marketplace.json` (the Claude Code-compatible path this example ships). Point `/marketplace add` at this folder to load the example.

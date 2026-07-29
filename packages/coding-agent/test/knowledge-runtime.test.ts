@@ -248,6 +248,69 @@ describe("ZZ Knowledge runtime", () => {
 		});
 	});
 
+	it("keeps the newest Recall working set when an older request finishes later", async () => {
+		const oldRecallStarted = Promise.withResolvers<void>();
+		const releaseOldRecall = Promise.withResolvers<void>();
+		const server = Bun.serve({
+			port: 0,
+			async fetch(request) {
+				const url = new URL(request.url);
+				const body = request.method === "GET" ? undefined : await request.json().catch(() => undefined);
+				if (request.method === "PUT" && url.pathname.includes("/banks/")) {
+					return Response.json({ id: "bank" });
+				}
+				if (request.method === "GET" && url.pathname.endsWith("/config")) {
+					return Response.json({ config: {}, overrides: {} });
+				}
+				if (request.method === "PATCH" && url.pathname.endsWith("/config")) {
+					return Response.json({ config: {}, overrides: {} });
+				}
+				if (request.method === "POST" && url.pathname.endsWith("/memories/recall")) {
+					const query = queryFrom(body);
+					if (query === "old planning context") {
+						oldRecallStarted.resolve();
+						await releaseOldRecall.promise;
+						return Response.json({ results: [{ id: "old", text: "오래된 계획 지식", type: "observation" }] });
+					}
+					return Response.json({ results: [{ id: "new", text: "최신 구현 지식", type: "observation" }] });
+				}
+				return Response.json({ error: "not found" }, { status: 404 });
+			},
+		});
+		servers.push(server);
+		const runtime = createKnowledgeRuntime({
+			settings: Settings.isolated({
+				"knowledge.enabled": true,
+				"knowledge.hindsight.apiUrl": server.url.origin,
+			}),
+			agentDir: await createAgentDir(),
+			repoId: "concurrent-recall-repo",
+		});
+		runtimes.push(runtime);
+
+		const oldRecall = runtime.recall({
+			purpose: "task-planning",
+			query: "old planning context",
+			scope: { repo: true },
+			depth: "normal",
+			identity: identity({ repoId: "concurrent-recall-repo", planVersion: 1 }),
+		});
+		await oldRecallStarted.promise;
+		const newest = await runtime.recall({
+			purpose: "implementation",
+			query: "new implementation context",
+			scope: { repo: true },
+			depth: "normal",
+			identity: identity({ repoId: "concurrent-recall-repo", planVersion: 2 }),
+		});
+		releaseOldRecall.resolve();
+		const old = await oldRecall;
+
+		expect(old.items[0]?.id).toBe("old");
+		expect(newest.items[0]?.id).toBe("new");
+		expect((await runtime.status()).workingSet?.items[0]?.id).toBe("new");
+	});
+
 	it("creates readable Global and Repository banks while routing each scope to its own stable bank", async () => {
 		const requests: RecordedRequest[] = [];
 		const server = startHindsightStub(requests);

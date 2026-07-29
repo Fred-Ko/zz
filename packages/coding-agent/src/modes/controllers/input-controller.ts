@@ -330,9 +330,6 @@ export class InputController {
 			if (this.ctx.hasActiveOmfg() && this.ctx.handleOmfgEscape()) {
 				return;
 			}
-			if (this.ctx.cancelGuidedGoalInput?.()) {
-				return;
-			}
 
 			if (!this.ctx.focusedAgentId) {
 				const viewSession = this.ctx.viewSession;
@@ -661,10 +658,6 @@ export class InputController {
 			}
 
 			if (!text && !hasPendingImages) return;
-
-			if (text && this.ctx.submitGuidedGoalInput?.(text)) {
-				return;
-			}
 
 			// Continue shortcuts: "." or "c" resume the agent with a hidden agent-authored
 			// developer directive (no visible user message) instead of an empty turn, so the

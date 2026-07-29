@@ -5,13 +5,13 @@ description: Use when creating a new zz marketplace. Covers marketplace.json sch
 
 # Authoring Marketplaces
 
-A marketplace is a Git repository (or local directory) that contains a catalog file at either `.omp-plugin/marketplace.json` (the retained ZZ-specific compatibility path) or `.claude-plugin/marketplace.json` (Claude Code-compatible; used as the fallback). Anyone can author one. Users add it with `/marketplace add owner/repo` and then install individual plugins from it.
+A marketplace is a Git repository (or local directory) with a catalog at `.zz-plugin/marketplace.json`. ZZ also reads the legacy `.omp-plugin/marketplace.json` compatibility path and the Claude Code-compatible `.claude-plugin/marketplace.json` fallback. Anyone can author one. Users add it with `/marketplace add owner/repo` and then install individual plugins from it.
 
 ## Minimum viable marketplace
 
 ```
 my-marketplace/
-  .claude-plugin/
+  .zz-plugin/
     marketplace.json
   plugins/
     my-plugin/
@@ -43,7 +43,7 @@ Push to GitHub. Users install with:
 
 ## marketplace.json schema
 
-The catalog file lives at either `.omp-plugin/marketplace.json` or `.claude-plugin/marketplace.json` in the repository root. zz prefers the `.omp-plugin/` path and falls back to the Claude path; a repository may publish both to expose tool-specific catalogs from a single source tree.
+The canonical catalog lives at `.zz-plugin/marketplace.json` in the repository root. ZZ then checks the legacy `.omp-plugin/` compatibility path and finally `.claude-plugin/`; a repository may publish the ZZ and Claude copies together when both tools consume the same source tree.
 
 ### Top-level fields
 
@@ -87,7 +87,7 @@ The catalog file lives at either `.omp-plugin/marketplace.json` or `.claude-plug
     "email": "plugins@acme.example"
   },
   "metadata": {
-    "description": "Official Acme plugins for oh-my-pi"
+    "description": "Official Acme plugins for ZZ"
   },
   "plugins": [
     {
@@ -102,7 +102,7 @@ The catalog file lives at either `.omp-plugin/marketplace.json` or `.claude-plug
       "category": "devops",
       "source": {
         "source": "github",
-        "repo": "acme-corp/omp-deploy-plugin",
+      "repo": "acme-corp/zz-deploy-plugin",
         "ref": "main"
       }
     }
@@ -201,12 +201,14 @@ my-plugin/
   agents/*.md              ← subagent definitions
   hooks/pre/, hooks/post/  ← hooks
   tools/                   ← custom tools
-  .mcp.json                ← MCP server definitions
+  .mcp.json                ← MCP server definitions (default location)
   package.json             ← optional; its version is a fallback when the catalog entry has no version
   README.md                ← recommended: description + usage
 ```
 
-> Note: extension modules declared via `package.json` `omp.extensions` are **not** loaded from marketplace installs — that mechanism only applies to npm-installed or `zz plugin link`ed plugins. Ship marketplace plugin behavior through the conventional directories above.
+> Note: MCP servers may instead be declared by the manifest's `mcpServers` field — either an inline server map or a path to a config file inside the plugin root (`{ "mcpServers": "./mcp-zz.json" }`). ZZ reads `.zz-plugin/plugin.json` first, then the compatibility `.omp-plugin/plugin.json`, and finally `.claude-plugin/plugin.json`; a manifest declaration replaces the default `.mcp.json` rather than merging with it, so one published tree can carry a per-harness MCP config.
+
+> Note: extension modules declared via `package.json#zz.extensions` **are** loaded from marketplace installs. Legacy manifest aliases remain readable for compatibility. Installation symlinks the cached plugin into the scope's `node_modules` and records it in `zz-plugins.lock.json`, the same runtime surfaces used by npm-installed and `zz plugin link`ed plugins.
 
 ## Install command
 
@@ -245,7 +247,7 @@ Invalid: `-bad-start`, `bad-end-`, `.dot-start`, `Under_score`, `HAS_CAPS`
 
 ## Publishing workflow
 
-1. Create `marketplace.json` at `.omp-plugin/marketplace.json` (ZZ-only compatibility namespace) or `.claude-plugin/marketplace.json` (shared with Claude Code) in a new Git repo.
+1. Create `marketplace.json` at `.zz-plugin/marketplace.json`; optionally mirror it at `.claude-plugin/marketplace.json` for Claude Code consumers.
 2. Add plugin entries pointing to subdirectories (or external sources).
 3. Push to GitHub.
 4. Share the `owner/repo` string. Users add it with `/marketplace add owner/repo`.

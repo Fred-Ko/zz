@@ -118,7 +118,7 @@ async function collectPluginsAtRoot(
 	const plugins: ScopedInstalledPlugin[] = [];
 	for (const name of names) {
 		const pluginPkgPath = path.join(nodeModulesPath, name, "package.json");
-		let pluginPkg: { version: string; omp?: PluginManifest; pi?: PluginManifest };
+		let pluginPkg: { version: string; zz?: PluginManifest; omp?: PluginManifest; pi?: PluginManifest };
 		try {
 			pluginPkg = await Bun.file(pluginPkgPath).json();
 		} catch (err) {
@@ -128,7 +128,7 @@ async function collectPluginsAtRoot(
 			throw err;
 		}
 
-		const manifest: PluginManifest | undefined = pluginPkg.omp || pluginPkg.pi;
+		const manifest: PluginManifest | undefined = pluginPkg.zz ?? pluginPkg.omp ?? pluginPkg.pi;
 		if (!manifest) {
 			// Not a compatible ZZ plugin, skip.
 			continue;
@@ -246,14 +246,14 @@ function findDirectoryIndex(dir: string): string | null {
 }
 
 interface DeclaredManifestEntries {
-	/** True when the directory's package.json declares a non-empty `omp`/`pi` `extensions` array. */
+	/** True when package.json declares a non-empty `zz`/`omp`/`pi` `extensions` array. */
 	declared: boolean;
 	/** Resolved, existing module files for the declared entries (may be empty when declared files are missing). */
 	files: string[];
 }
 
 /**
- * Read the extension entries declared by `dir`'s own package.json `omp`/`pi`
+ * Read the extension entries declared by `dir`'s own package.json `zz`/`omp`/`pi`
  * manifest. `declared` distinguishes "a manifest explicitly lists extensions"
  * (authoritative — callers must not fall back to index/scan, so a missing
  * declared file surfaces as a missing entry instead of silently loading a stale
@@ -269,13 +269,17 @@ function readDeclaredManifestEntries(dir: string): DeclaredManifestEntries {
 	} catch {
 		return { declared: false, files: [] };
 	}
-	let pkg: { omp?: { extensions?: unknown }; pi?: { extensions?: unknown } };
+	let pkg: { zz?: { extensions?: unknown }; omp?: { extensions?: unknown }; pi?: { extensions?: unknown } };
 	try {
-		pkg = JSON.parse(raw) as { omp?: { extensions?: unknown }; pi?: { extensions?: unknown } };
+		pkg = JSON.parse(raw) as {
+			zz?: { extensions?: unknown };
+			omp?: { extensions?: unknown };
+			pi?: { extensions?: unknown };
+		};
 	} catch {
 		return { declared: false, files: [] };
 	}
-	const declared = (pkg.omp ?? pkg.pi)?.extensions;
+	const declared = (pkg.zz ?? pkg.omp ?? pkg.pi)?.extensions;
 	if (!Array.isArray(declared) || declared.length === 0) {
 		return { declared: false, files: [] };
 	}
@@ -302,7 +306,7 @@ function readDeclaredManifestEntries(dir: string): DeclaredManifestEntries {
 /**
  * Resolve a directory to its loadable extension module files, mirroring the
  * configured-directory (`-e`) scanner in extensions/loader.ts:
- *   1. the directory's own package.json `omp`/`pi` `extensions` entries —
+ *   1. the directory's own package.json `zz`/`omp`/`pi` `extensions` entries —
  *      authoritative: a manifest that lists extensions suppresses the index/scan
  *      fallback, so a missing declared file is reported rather than silently
  *      replaced by a decoy index
