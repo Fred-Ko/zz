@@ -3,6 +3,8 @@
 > **문서 상태: 현재 · 권위 있는 ZZW 구현 계약**
 >
 > 사용자 관점의 시작·승인·재개 흐름은 [product-workflows.md](product-workflows.md)를 함께 본다.
+> 여러 dependency-ready step의 실행, resource 충돌, 격리 subagent와 병렬 검증은
+> [parallel-execution.md](parallel-execution.md)를 따른다.
 
 ## 1. 목적
 
@@ -108,6 +110,14 @@ Plan DAG는 기본 Todo에서 가져오지 않는다. `zzw_propose_plan` 또는 
 
 최초 실행 Plan은 항상 `draft`이며 모델은 자신의 제안을 승인할 수 없다. 사용자가 `/zzw approve-plan`을 실행한 뒤에만 side effect가 허용된다. 이후 Plan은 실행 중 발견에 따라 버전이 증가하며, 각 step에는 최초 버전, 최근 계약 변경 버전, 계약 hash, parent, supersedes/supersededBy, assumption, 입력·출력 artifact가 남는다. 교체·무효화된 노드는 삭제하지 않고 lineage로 보존한다.
 
+유효한 최초 Plan 제안과 재승인이 필요한 material patch는 단순한 write gate가 아니라 host-owned
+`await-user` 터미널 경계다. Plan 도구는 배타 실행되고 결과에 단계 요약과 `/zzw approve-plan`을
+표시한다. 결과가 session history에 저장된 직후 현재 provider loop를 정상 종료하며, 같은 prompt
+cycle에서 추가 모델 호출, tool batch의 후속 실행, Todo reminder, empty-stop retry, compaction/Goal
+continuation을 허용하지 않는다. 다음 명시적 사용자 prompt가 새 cycle을 시작한다. 유효하지 않은 Plan은
+이 경계를 만들지 않으므로 모델이 반환된 `issues`를 같은 turn에서 수정할 수 있고, 승인 유지 structural
+patch도 실행을 계속한다.
+
 승인 명령은 Plan 상태 전이 뒤 Goal continuation을 요청한다. active Goal, ready Plan, blocker 없음인데도
 승인 후 실행이 시작되지 않는 회귀를 막기 위해 slash command/TUI와 continuation callback의 연결을
 계약으로 테스트한다. Goal이 `SUSPENDED`라면 승인 반복이 아니라 `/zzw-goal resume`이 필요하다.
@@ -118,10 +128,12 @@ Plan은 tree가 아니라 DAG다. `parentStepId`는 화면의 계층을 표현�
 
 Plan patch는 위험도에 따라 승인 경계가 다르다.
 
-- `structural`: 기존 권한·성공 기준 안에서 단계 분해, 추가, dependency 재연결, milestone 확장. 기본 설정에서는 기존 승인을 이어받아 즉시 계속한다.
-- `material`: 도구 권한 확대, high-risk 단계, 성공·검증 기준 약화, 완료 결과 무효화. 반드시 다시 `/zzw approve-plan`을 실행한다.
+- `structural`: 기존 권한·성공 기준 안에서 단계 분해, 추가, dependency 재연결, milestone 확장. 실패한 validator를 동일 exact command·executor·tool/target/risk envelope로 교체하거나 승인된 검증 환경의 준비 단계를 추가하는 경우도 여기에 속한다. 기본 설정에서는 기존 승인을 이어받아 즉시 계속한다.
+- `material`: 도구 권한 확대, high-risk 단계, 성공·검증 기준 약화, 완료 결과 무효화, 기존 execution 계약 변경, 승인 경계에 없던 validator/subagent executor 추가 또는 exact validator 명령 변경. 반드시 다시 `/zzw approve-plan`을 실행한다.
 
-모든 patch를 재승인하려면 `zzworkflow.planPatchApproval: always`로 설정한다. 기본값은 `material`이다. 승인 대기 중에는 ZZW 자동 continuation을 예약하지 않으므로 Goal continuation과 안전 gate가 서로 반복되지 않는다.
+대체 단계의 `supersedes`는 이전 노드를 자동으로 `superseded`로 전환하고 evidence dependency closure를 다시 계산한다. 호출자가 같은 ID를 `removeStepIds`에 중복 지정할 필요가 없다. 이 계약은 교체 validator와 옛 validator가 동시에 ready가 되어 잘못된 명령 gate를 밟는 것을 막는다.
+
+모든 patch를 재승인하려면 `zzworkflow.planPatchApproval: always`로 설정한다. 기본값은 `material`이다. 승인 대기 중에는 ZZW 자동 continuation을 예약하지 않으며 살아 있는 provider loop도 터미널 경계에서 끝나므로 Goal continuation과 안전 gate가 서로 반복되지 않는다. 안전 gate는 비정상·경합 상황의 최후 방어선이지 정상 승인 흐름을 만드는 제어 장치가 아니다.
 
 사용자는 다음 명령으로 실제 Registry 상태와 변경 근거를 확인한다.
 
@@ -130,7 +142,7 @@ Plan patch는 위험도에 따라 승인 경계가 다르다.
 - `/zzw history`: Plan 버전별 변경 요약
 - `/zzw diff [version]`: 추가·수정·교체·무효화·보존 ID와 원인
 - `/zzw why <step-id>`: 특정 step의 계약, 증거, 관찰, 변경 이유
-- `/zzw evidence`, `/zzw operations`: 증거와 operation journal
+- `/zzw evidence`, `/zzw operations`, `/zzw lanes`: 증거, operation journal, Execution Wave/Lane 상태
 
 사용자 설정 namespace도 `zzworkflow`를 사용한다. 이전 `workflow.heartbeatIntervalSeconds`와 `workflow.workspaceLeaseSeconds`는 로드 시 아래 키로 자동 이전한다.
 
@@ -139,7 +151,50 @@ zzworkflow:
   heartbeatIntervalSeconds: 15
   workspaceLeaseSeconds: 90
   planPatchApproval: material
+  execution:
+    mode: validation
+    validationConcurrency: 4
+    subagentConcurrency: 3
+    preserveFailedLanes: true
+    rollingEpoch: true
+    workUnits:
+      enabled: false
+      model: "*"
+    adversarialReview:
+      enabled: true
+      model: "*"
+      maxRepairAttempts: 1
 ```
+
+Work Unit delegation과 적대 리뷰는 별도 선택 기능이다. Work Unit은 기본 비활성화이며, 적대 리뷰는
+기본 활성화이며 capability와 관계없이 isolated-write candidate가 있을 때 동작한다. 리뷰를 끄더라도 Work Unit
+validator, scope 검사, 직렬 integration과 최종 evidence gate는 유지된다. 상세 계약은
+[parallel-execution.md](parallel-execution.md)를 따른다.
+
+Work Unit이 활성화되면 Plan 작성기는 모든 현재 work 단계마다 `retain-primary`, `delegate-readonly`,
+`delegate-isolated` 중 하나와 구조화된 이유를 기록해야 한다. Runtime은 판단이 없는 Plan을 거절하며,
+현재 설정과 위임·Primary 유지·미평가 개수는 workflow context와 상태 조회에 포함한다. 따라서 Primary
+기본값으로 위임 검토가 조용히 생략되는 것은 유효한 Plan이 아니다.
+
+단, Work Unit 정책이 켜지기 전에 이미 Registry에 저장된 draft Plan까지 새 필드 누락으로 승인 불가능하게
+만들지는 않는다. `/zzw approve-plan`은 기존 `executor`, resource claim, tool/target, dependency와 Plan
+version을 그대로 둔 채 누락된 판단만 보수적으로 정규화한 다음 전체 Plan을 검증한다. 기본 Primary와
+exclusive resource는 `retain-primary/exclusive-resource`로 보존한다. 기존 read-only 또는 isolated
+executor도 같은 종류의 delegation 판단으로 보존한다. 이 호환 경로는 저장된 Plan의 권한을 넓히거나 새
+Plan 제안의 누락을 허용하지 않는다. 현재 Work Unit 정책 아래 새로 제안·패치되는 Plan은 계속 누락 즉시
+`DELEGATION_ASSESSMENT_MISSING`으로 거절된다. 승인 검증이 다른 이유로 실패해도 slash command는 예외를
+TUI 밖으로 전파하지 않고 구조화된 원인을 화면 history에 남긴다.
+
+Work Unit과 Reviewer의 두 모델 설정은 자유 입력이 아니다. Settings UI가 현재 로그인 상태와
+`enabledModels` 범위에서 실제 선택 가능한 모델 및 각 모델이 지원하는 effort만 보여 준다. `*`은 현재
+세션 모델의 기본 effort, `*:high`는 현재 세션 모델의 high effort를 뜻한다. Wave 준비 시 exact
+`provider/model[:effort]`로 고정하며 저장된 모델이나 effort가 더 이상 유효하지 않으면 ZZW는 임의
+fallback 없이 실행을 차단한다. Plan capability는 모델을 세 종류로 나누는 설정이 아니라 분해·리뷰·위험
+판정용 메타데이터다.
+
+실행 방식도 두 기능과 독립적이다. `serial`은 Work Unit과 reviewer Lane을 순차 실행하고,
+`safe-parallel`은 충돌하지 않는 Lane의 동시 실행을 허용한다. ZZW 격리 backend는 설정으로 노출하지 않고
+항상 native PAL의 `auto` resolver가 결정한다.
 
 각 step은 최소한 다음을 가진다.
 
@@ -157,7 +212,14 @@ Specification은 성공 조건에 `SC-*`, 명시적 검증 요구사항에 `V-*`
 
 모든 성공 조건은 하나 이상의 validation 또는 acceptance step과 연결되고, 명시적 검증 요구사항은 validator가 있는 validation step과 연결되어야 한다. 잘못된 제안은 fail-fast하지 않고 ID 누락, 잘못된 의존성, 순환, validator 누락을 구조화된 `issues` 배열 하나로 반환한다. 모델은 전체 issue를 고친 뒤 한 번만 재제안한다. 불확실성이 큰 단계 뒤에는 짧은 planning horizon을 사용한다.
 
-명령 실패와 계획 실패를 구분한다. 컴파일·린트·테스트가 현재 work 단계에서 수정할 코드 결함을 드러낸 `implementation-feedback`과, 승인 범위 안의 DB·Kafka·Docker daemon·생성 파일 같은 `missing-precondition`은 같은 단계를 계속하며 Plan 버전이나 승인을 바꾸지 않는다. 목표·전략·권한·dependency·acceptance 계약이 실제로 달라질 때만 계획 실패다. 계획 실패 시에도 전체 계획을 다시 쓰지 않는다. Runtime은 patch의 observation, evidence, failed step, contradicted assumption, artifact 소비 관계에서 직접 영향 root를 계산한 뒤 downstream dependency closure만 무효화한다. 영향 밖의 완료 step과 계약 hash가 같은 evidence는 자동 보존한다.
+명령 실패와 계획 실패를 구분한다. 컴파일·린트·테스트가 현재 work 단계에서 수정할 코드 결함을 드러낸 `implementation-feedback`과, 승인 범위 안의 DB·Kafka·Docker daemon·생성 파일 같은 `missing-precondition`은 같은 단계를 계속하며 Plan 버전이나 승인을 바꾸지 않는다. validation의 첫 실패도 즉시 Plan 실패로 확정하지 않고 `classify-result`에서 원인을 분류한다. validation 전제가 빠졌다면 Runtime은 `satisfy-approved-precondition` 상태를 열어 해당 단계의 기존 tool/target 범위 안에서 준비·진단 operation을 허용하되 이를 verification evidence로 인정하지 않는다. 준비 성공 evidence를 `progress/matched`로 보고해야 validator가 다시 pending이 되고 exact command를 재실행할 수 있다. 목표·전략·권한·dependency·acceptance 계약이 실제로 달라질 때만 계획 실패다. 계획 실패 시에도 전체 계획을 다시 쓰지 않는다. Runtime은 patch의 observation, evidence, failed step, contradicted assumption, artifact 소비 관계에서 직접 영향 root를 계산한 뒤 downstream dependency closure만 무효화한다. 영향 밖의 완료 step과 계약 hash가 같은 evidence는 자동 보존한다.
+
+같은 원칙을 delegated Work Unit에도 강제한다. Work Unit과 독립 reviewer는 `plan_impact`를
+`none/execution/structural/contract`으로 구조화해 제출하고 Plan을 직접 수정하지 않는다. Runtime은
+execution이면 같은 Work Unit의 제한 repair로 유지하고, structural이면 후보를 격리 보존한 채
+`patch-plan`, contract이면 `request-user`로 전환한다. 이미 실행 중인 독립 Lane의 결과는 보존하고 새
+admission만 닫는다. 자세한 필드와 상태 전이는 [parallel-execution.md](parallel-execution.md)의
+Delegated Plan Impact Protocol을 따른다.
 
 `zzw_patch_plan.update_steps`는 부분 갱신 계약이다. 생략한 scalar와 배열 필드는 기존 값을 보존하며, 빈 배열을 명시한 경우에만 해당 목록을 비운다. Plan 승인 전에는 필수 표시 필드와 dependency/mapping 구조를 다시 검증한다. 과거 버그로 손상된 부분 패치 snapshot은 직전의 유효한 snapshot과 병합해 복구하고, 그래도 복구할 수 없는 Todo projection은 안내 문자열로 안전하게 렌더링한다.
 
@@ -182,6 +244,7 @@ workspace fingerprint가 side effect 직전에 바뀌거나 contradiction observ
 - `zzw_report_observation`: Evidence와 모델 해석을 분리해 기록
 - `zzw_report_step_result`: work step의 완료·실패·부분 결과 보고
 - `zzw_submit_verification`: 정확한 validator 실행에서 나온 trusted evidence 제출
+- `zzw_execute_wave`: 현재 ready validator/read-only/isolated Lane을 설정·resource claim 범위에서 실행
 
 ## 7. Verification과 Completion
 
@@ -282,6 +345,7 @@ knowledge:
 ```sh
 bun test \
   packages/coding-agent/test/goals/task-lifecycle.test.ts \
+  packages/coding-agent/test/workflow-execution.test.ts \
   packages/coding-agent/test/workflow-store.test.ts \
   packages/coding-agent/test/workflow-identity.test.ts \
   packages/coding-agent/test/workflow-checkpoint.test.ts \

@@ -1094,6 +1094,8 @@ describe("Settings", () => {
 				},
 				"workflow.autoqa": true,
 				"workflow.checkpointRemote": "agent-state",
+				zzworkflow: { execution: { isolationMode: "rcopy" } },
+				"zzworkflow.execution.isolationMode": "overlayfs",
 				todo: { reminders: { max: 1 } },
 			});
 
@@ -1116,6 +1118,7 @@ describe("Settings", () => {
 			expect(onDisk.zzworkflow).toEqual({ heartbeatIntervalSeconds: 7 });
 			expect(onDisk["workflow.autoqa"]).toBeUndefined();
 			expect(onDisk["workflow.checkpointRemote"]).toBeUndefined();
+			expect(onDisk["zzworkflow.execution.isolationMode"]).toBeUndefined();
 			expect(onDisk["todo.reminders.max"]).toBeUndefined();
 
 			const reloaded = await Settings.loadIsolated({ cwd: projectDir, agentDir });

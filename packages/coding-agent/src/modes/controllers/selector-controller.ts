@@ -71,6 +71,7 @@ import { ToolAbortError } from "../../tools/tool-errors";
 import { copyToClipboard } from "../../utils/clipboard";
 import { repo } from "../../utils/git";
 import { setSessionTerminalTitle } from "../../utils/title-generator";
+import { toZZWSelectableModel } from "../../workflow/execution/model-selection";
 import { type AdvisorConfigDeps, AdvisorConfigOverlayComponent } from "../components/advisor-config";
 import { AgentDashboard } from "../components/agent-dashboard";
 import { AgentHubOverlayComponent } from "../components/agent-hub";
@@ -155,6 +156,8 @@ export class SelectorController {
 
 	showSettingsSelector(): void {
 		getAvailableThemes().then(availableThemes => {
+			const availableModels = this.ctx.session.getAvailableModels();
+			const activeModel = this.ctx.session.model;
 			// Fullscreen settings editor on the alternate screen: the overlay
 			// enables mouse tracking (click/hover/wheel) for its lifetime and
 			// the transcript stays untouched underneath.
@@ -169,11 +172,11 @@ export class SelectorController {
 					availableThinkingLevels: [...this.ctx.session.getAvailableThinkingLevels()],
 					thinkingLevel: this.ctx.session.thinkingLevel,
 					availableThemes,
-					providers: [...new Set(this.ctx.session.getAvailableModels().map(model => model.provider))].sort(
-						(a, b) => a.localeCompare(b),
-					),
+					providers: [...new Set(availableModels.map(model => model.provider))].sort((a, b) => a.localeCompare(b)),
+					availableModels: availableModels.map(toZZWSelectableModel),
+					activeModelSelector: activeModel ? `${activeModel.provider}/${activeModel.id}` : undefined,
 					cwd: getProjectDir(),
-					model: this.ctx.session.model,
+					model: activeModel,
 					imageBudget: this.ctx.ui.imageBudget,
 					requestRender: () => this.ctx.ui.requestRender(),
 				},

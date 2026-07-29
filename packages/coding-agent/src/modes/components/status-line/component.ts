@@ -254,17 +254,49 @@ function hasGitBackedSegment(segments: readonly StatusLineSegmentId[]): boolean 
 	return hasGitSegment(segments) || hasPrSegment(segments) || hasWorktreeSegment(segments);
 }
 
+interface DetailedStatusRow {
+	label: string;
+	segments: readonly StatusLineSegmentId[];
+}
+
 /**
- * Semantic rows used by the detailed layout. A configured segment keeps its
- * left/right alignment, but moves into the row matching its purpose so a wide
- * usage summary can no longer evict the model or workspace identity.
+ * Detailed mode favors vertical scanning over density. Each row owns one
+ * semantic category, so cumulative token counters cannot crowd model,
+ * workflow, or workspace identity off the screen.
  */
-const DETAILED_STATUS_ROWS: readonly (readonly StatusLineSegmentId[])[] = [
-	["pi", "model", "mode", "collab", "session_name", "hostname"],
-	["path", "worktree", "git", "pr", "session", "subagents"],
-	["context_pct", "context_total", "token_in", "token_out", "token_total", "token_rate"],
-	["cache_read", "cache_write", "cache_hit", "cost", "usage", "time_spent", "time"],
+const DETAILED_STATUS_ROWS: readonly DetailedStatusRow[] = [
+	{ label: "상태", segments: ["mode", "collab", "subagents"] },
+	{ label: "작업", segments: ["session_name"] },
+	{ label: "모델", segments: ["pi", "model", "hostname"] },
+	{ label: "작업공간", segments: ["path", "worktree"] },
+	{ label: "Git", segments: ["git", "pr"] },
+	{ label: "컨텍스트", segments: ["context_pct", "context_total", "token_rate"] },
+	{ label: "토큰", segments: ["token_in", "token_out", "token_total", "cache_read", "cache_write", "cache_hit"] },
+	{ label: "비용·한도", segments: ["cost", "usage"] },
+	{ label: "세션", segments: ["session", "time_spent", "time"] },
 ];
+
+const DETAILED_LABEL_WIDTH = 12;
+
+const DETAILED_SEGMENT_LABELS: Partial<Record<StatusLineSegmentId, string>> = {
+	hostname: "호스트",
+	path: "경로",
+	worktree: "워크트리",
+	git: "브랜치",
+	pr: "PR",
+	token_rate: "속도",
+	token_in: "입력",
+	token_out: "출력",
+	token_total: "합계",
+	cache_read: "캐시 읽기",
+	cache_write: "캐시 쓰기",
+	cache_hit: "캐시 적중률",
+	usage: "사용 한도",
+	session: "ID",
+	time_spent: "작업 시간",
+	time: "현재 시각",
+	subagents: "에이전트",
+};
 
 // ═══════════════════════════════════════════════════════════════════════════
 // StatusLineComponent
@@ -1335,6 +1367,148 @@ export class StatusLineComponent implements Component {
 		return theme.fg("statusLineSubagents", `${theme.icon.agents} ${this.#subagentCount} ${noun}`);
 	}
 
+	#workflowStepDetail(): string | undefined {
+		const goalState = this.session.getGoalModeState?.();
+		if (goalState?.controller !== "zzworkflow") return undefined;
+
+		const workflow = this.session.taskLifecycle?.state;
+		if (!workflow) return undefined;
+
+		const step =
+			workflow.plan.steps.find(candidate => candidate.status === "in_progress") ??
+			workflow.plan.steps.find(candidate => candidate.status === "blocked") ??
+			workflow.plan.steps.find(
+				candidate =>
+					candidate.status === "pending" &&
+					candidate.dependsOn.every(
+						dependencyId =>
+							workflow.plan.steps.find(dependency => dependency.id === dependencyId)?.status === "completed",
+					),
+			);
+		if (!step) return undefined;
+
+		const executableSteps = workflow.plan.steps.filter(
+			candidate =>
+				candidate.kind !== "milestone" &&
+				candidate.status !== "invalidated" &&
+				candidate.status !== "superseded" &&
+				candidate.status !== "abandoned",
+		);
+		const position = executableSteps.findIndex(candidate => candidate.id === step.id);
+		const progress =
+			step.kind === "milestone"
+				? "마일스톤"
+				: position >= 0
+					? `Step ${position + 1}/${executableSteps.length}`
+					: "Step";
+		const color = step.status === "blocked" ? "warning" : "accent";
+		const detail = [progress, step.id, step.content].map(sanitizeStatusText).filter(Boolean).join(" · ");
+		return theme.fg(color, detail);
+	}
+
+	#workflowWaveDetail(): string | undefined {
+		const goalState = this.session.getGoalModeState?.();
+		if (goalState?.controller !== "zzworkflow") return undefined;
+		const workflow = this.session.taskLifecycle?.state;
+		const waveId = workflow?.execution?.activeWaveId;
+		if (!workflow || !waveId) return undefined;
+		const wave = workflow.execution.waves.find(candidate => candidate.id === waveId);
+		if (!wave) return undefined;
+		const lanes = workflow.execution.lanes.filter(lane => wave.laneIds.includes(lane.id));
+		const counts = {
+			running: lanes.filter(lane => lane.status === "running").length,
+			queued: lanes.filter(lane => lane.status === "prepared").length,
+			reviewing: lanes.filter(lane => lane.status === "awaiting-review").length,
+			validating: lanes.filter(lane => lane.status === "awaiting-validation").length,
+			integrating: lanes.filter(lane => lane.status === "awaiting-integration").length,
+			failed: lanes.filter(lane => lane.status === "failed" || lane.status === "rejected").length,
+			done: lanes.filter(lane => lane.status === "succeeded" || lane.status === "integrated").length,
+		};
+		const detail = [
+			`Wave ${wave.id}`,
+			wave.status,
+			`${counts.running} 실행`,
+			`${counts.queued} 대기`,
+			`${counts.reviewing} 리뷰`,
+			`${counts.validating} 후보검증`,
+			`${counts.integrating} 통합`,
+			`${counts.done} 완료`,
+			`${counts.failed} 실패`,
+		]
+			.map(sanitizeStatusText)
+			.join(" · ");
+		return theme.fg(counts.failed > 0 ? "warning" : "accent", detail);
+	}
+
+	#activityDetail(ctx: SegmentContext): string | undefined {
+		const parts: string[] = [];
+		if (this.session.isStreaming) {
+			parts.push(theme.fg("success", "에이전트 작업 중"));
+			if (ctx.usageStats.tokensPerSecond) {
+				parts.push(theme.fg("statusLineOutput", `${ctx.usageStats.tokensPerSecond.toFixed(1)} tok/s`));
+			}
+		}
+		const runningBackgroundJobs = this.session.getAsyncJobSnapshot()?.running.length ?? 0;
+		if (runningBackgroundJobs > 0) {
+			parts.push(theme.fg("statusLineSubagents", `백그라운드 작업 ${runningBackgroundJobs}개`));
+		}
+		return parts.length > 0 ? parts.join(theme.fg("statusLineSep", " · ")) : undefined;
+	}
+
+	#renderDetailedStatusRow(
+		width: number,
+		effectiveSettings: EffectiveStatusLineSettings,
+		ctx: SegmentContext,
+		label: string,
+		segmentIds: readonly StatusLineSegmentId[],
+		extraParts: readonly string[] = [],
+	): string {
+		if (width <= 0) return "";
+
+		const renderedSegments: Array<{ id: StatusLineSegmentId; content: string }> = [];
+		for (const id of segmentIds) {
+			const rendered = renderSegment(id, ctx);
+			if (rendered.visible && rendered.content) {
+				renderedSegments.push({ id, content: rendered.content });
+			}
+		}
+
+		const visibleIds = new Set(renderedSegments.map(segment => segment.id));
+		const parts = renderedSegments
+			.filter(segment => {
+				if (segment.id === "context_total" && visibleIds.has("context_pct")) return false;
+				if (segment.id === "token_total" && (visibleIds.has("token_in") || visibleIds.has("token_out"))) {
+					return false;
+				}
+				return true;
+			})
+			.map(segment => {
+				const segmentLabel = DETAILED_SEGMENT_LABELS[segment.id];
+				return segmentLabel
+					? `${theme.fg("dim", sanitizeStatusText(segmentLabel))} ${segment.content}`
+					: segment.content;
+			});
+		parts.push(...extraParts.filter(Boolean));
+
+		if (parts.length === 0) return "";
+
+		const labelFieldWidth = Math.min(DETAILED_LABEL_WIDTH, Math.max(0, width - 2));
+		const cleanLabel = truncateToWidth(sanitizeStatusText(label), labelFieldWidth);
+		const labelPadding = " ".repeat(Math.max(1, labelFieldWidth - visibleWidth(cleanLabel)));
+		const labelContent = `${theme.fg("dim", cleanLabel)}${labelPadding}`;
+		const prefix = ` ${labelContent}`;
+		const availableContentWidth = Math.max(0, width - visibleWidth(prefix));
+		const separator = theme.fg("statusLineSep", " · ");
+		const content = truncateToWidth(parts.join(separator), availableContentWidth);
+		if (!content) return "";
+
+		const row = `${prefix}${content}`;
+		const fill = " ".repeat(Math.max(0, width - visibleWidth(row)));
+		const transparentBg = "\x1b[49m";
+		const bgAnsi = effectiveSettings.transparent ? transparentBg : theme.getBgAnsi("statusLineBg");
+		return `${bgAnsi}${theme.getFgAnsi("text")}${row}${fill}\x1b[0m`;
+	}
+
 	#buildStatusLines(width: number): string[] {
 		const effectiveSettings = this.#resolveSettings();
 		const includePath =
@@ -1373,18 +1547,40 @@ export class StatusLineComponent implements Component {
 		}
 
 		const configuredSegments = [...effectiveSettings.leftSegments, ...effectiveSettings.rightSegments];
-		const assignedSegments = new Set(DETAILED_STATUS_ROWS.flat());
+		const configuredSet = new Set(configuredSegments);
+		const assignedSegments = new Set(DETAILED_STATUS_ROWS.flatMap(row => row.segments));
 		const remainingSegments = configuredSegments.filter(segment => !assignedSegments.has(segment));
-		const rowGroups =
-			remainingSegments.length > 0 ? [...DETAILED_STATUS_ROWS, remainingSegments] : DETAILED_STATUS_ROWS;
 		const lines: string[] = [];
 
-		for (let index = 0; index < rowGroups.length; index++) {
-			const group = new Set(rowGroups[index]);
-			const leftSegments = effectiveSettings.leftSegments.filter(segment => group.has(segment));
-			const rightSegments = effectiveSettings.rightSegments.filter(segment => group.has(segment));
-			const line = this.#renderStatusRow(width, effectiveSettings, ctx, leftSegments, rightSegments, index === 1);
+		for (let index = 0; index < DETAILED_STATUS_ROWS.length; index++) {
+			const row = DETAILED_STATUS_ROWS[index];
+			const rowSegments = row.segments.filter(segment => configuredSet.has(segment));
+			const line = this.#renderDetailedStatusRow(width, effectiveSettings, ctx, row.label, rowSegments);
 			if (line) lines.push(line);
+
+			if (index === 1) {
+				const workflowStep = this.#workflowStepDetail();
+				if (workflowStep) {
+					lines.push(
+						this.#renderDetailedStatusRow(width, effectiveSettings, ctx, "현재 단계", [], [workflowStep]),
+					);
+				}
+				const workflowWave = this.#workflowWaveDetail();
+				if (workflowWave) {
+					lines.push(
+						this.#renderDetailedStatusRow(width, effectiveSettings, ctx, "실행 Wave", [], [workflowWave]),
+					);
+				}
+				const activity = this.#activityDetail(ctx);
+				if (activity) {
+					lines.push(this.#renderDetailedStatusRow(width, effectiveSettings, ctx, "활동", [], [activity]));
+				}
+			}
+		}
+
+		if (remainingSegments.length > 0) {
+			const remaining = this.#renderDetailedStatusRow(width, effectiveSettings, ctx, "기타", remainingSegments);
+			if (remaining) lines.push(remaining);
 		}
 
 		return lines;

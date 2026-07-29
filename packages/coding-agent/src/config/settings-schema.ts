@@ -149,7 +149,7 @@ export const TAB_GROUPS: Record<SettingTab, readonly string[]> = {
 		"Discovery & MCP",
 		"Developer",
 	],
-	tasks: ["Modes", "Subagents", "Isolation", "Commands & Skills"],
+	tasks: ["Modes", "Subagents", "Isolation", "Commands & Skills", "ZZWorkflow 실행"],
 	providers: ["Services", "Fireworks", "Tiny Model", "Protocol", "Timeouts", "Privacy"],
 };
 
@@ -2782,7 +2782,112 @@ export const SETTINGS_SCHEMA = {
 			description: "Re-approve only material Plan changes, or require approval for every patch",
 		},
 	},
-
+	"zzworkflow.execution.mode": {
+		type: "enum",
+		values: ["serial", "validation", "safe-parallel"] as const,
+		default: "validation",
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "실행 방식",
+			description: "Lane 실행 순서와 동시성만 제어하며 Work Unit 분해와 적대 리뷰 여부에는 영향을 주지 않습니다",
+		},
+	},
+	"zzworkflow.execution.validationConcurrency": {
+		type: "number",
+		default: 4,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "검증 동시 실행 수",
+			description: "하나의 ZZW Execution Wave에서 동시에 실행할 최대 validator 수입니다",
+		},
+	},
+	"zzworkflow.execution.subagentConcurrency": {
+		type: "number",
+		default: 3,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "Subagent 동시 실행 수",
+			description: "동시에 실행할 ZZW 읽기 전용 또는 격리 쓰기 subagent Lane의 최대 수입니다",
+		},
+	},
+	"zzworkflow.execution.preserveFailedLanes": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "실패 Lane 보존",
+			description: "복구와 대조를 위해 실패한 Lane의 산출물과 격리 변경을 보존합니다",
+		},
+	},
+	"zzworkflow.execution.rollingEpoch": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "Rolling Execution Epoch",
+			description: "같은 snapshot epoch에서 새로 준비된 Lane을 재평가하고 장부에 기록해 편입합니다",
+		},
+	},
+	"zzworkflow.execution.workUnits.enabled": {
+		type: "boolean",
+		default: false,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "Work Unit 위임",
+			description:
+				"모든 work 단계의 위임 여부를 명시적으로 판단하고 적합한 단계를 범위가 제한된 subagent Work Unit으로 분해합니다",
+		},
+	},
+	"zzworkflow.execution.workUnits.model": {
+		type: "string",
+		default: "*",
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "Work Unit 모델 · effort",
+			description: "모든 Work Unit 실행과 제한된 repair에 사용할 로그인 모델 및 지원 effort입니다",
+			condition: "zzwWorkUnitsEnabled",
+			options: "runtime",
+		},
+	},
+	"zzworkflow.execution.adversarialReview.enabled": {
+		type: "boolean",
+		default: true,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "적대 Work Unit 리뷰",
+			description: "모든 격리 write patch를 통합하기 전에 독립 읽기 전용 reviewer의 검사를 요구합니다",
+		},
+	},
+	"zzworkflow.execution.adversarialReview.model": {
+		type: "string",
+		default: "*",
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "적대 Reviewer 모델",
+			description: "독립 적대 reviewer agent에 사용할 로그인 모델 및 지원 effort입니다",
+			condition: "zzwAdversarialReviewEnabled",
+			options: "runtime",
+		},
+	},
+	"zzworkflow.execution.adversarialReview.maxRepairAttempts": {
+		type: "number",
+		default: 1,
+		ui: {
+			tab: "tasks",
+			group: "ZZWorkflow 실행",
+			label: "Work Unit 보수 시도",
+			description: "거절된 후보를 승격하기 전에 허용할 범위 제한 보수 시도의 최대 횟수입니다",
+		},
+	},
 	// TTSR
 	"ttsr.enabled": {
 		type: "boolean",

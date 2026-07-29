@@ -517,6 +517,72 @@ describe("InteractiveMode goal mode integration", () => {
 		expect(input.text).toContain("Ship from the approved slash command.");
 	});
 
+	it("surfaces an approval blocker without rejecting the slash command", async () => {
+		await harness.mode.handleZZWorkflowGoalCommand(
+			[
+				"## Objective",
+				"Ship a guarded change.",
+				"## Success criteria",
+				"- The focused test passes.",
+				"## Verification",
+				"- bun test focused.test.ts",
+			].join("\n"),
+		);
+		const lifecycle = harness.session.taskLifecycle;
+		await lifecycle.proposePlan({
+			basedOnSpecVersion: 1,
+			steps: [
+				{
+					id: "guarded-work",
+					phase: "Implementation",
+					content: "Implement the guarded change",
+					kind: "work",
+					dependsOn: [],
+					expectedEffects: ["Source changes"],
+					allowedTools: ["write"],
+					allowedTargets: [],
+					postconditions: ["Implementation evidence exists"],
+					successConditions: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "guarded-validation",
+					phase: "Validation",
+					content: "bun test focused.test.ts",
+					kind: "validation",
+					dependsOn: ["guarded-work"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Focused test passes"],
+					successConditions: ["The focused test passes."],
+					validators: ["bun test focused.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+			],
+		});
+		await lifecycle.approvePlan();
+		await lifecycle.prepareOperation({
+			toolCallId: "failed-write",
+			toolName: "write",
+			tier: "write",
+			args: { path: "guarded.ts" },
+		});
+		await lifecycle.settleOperation("failed-write", true);
+		const showStatus = vi.spyOn(harness.mode, "showStatus");
+
+		harness.mode.editor.setText("/zzw approve-plan");
+		await expect(executeBuiltinSlashCommand("/zzw approve-plan", { ctx: harness.mode })).resolves.toBe(true);
+
+		expect(showStatus).toHaveBeenCalledWith(
+			"Plan 승인 실패: active reconciliation must be classified and resolved before Plan approval can continue",
+		);
+		expect(harness.mode.editor.getText()).toBe("");
+	});
+
 	it("refuses /goal while plan mode is active", async () => {
 		const showWarning = vi.spyOn(harness.mode, "showWarning");
 		harness.mode.planModeEnabled = true;

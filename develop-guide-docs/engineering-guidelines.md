@@ -127,8 +127,19 @@ Plan schema 변경 시 반드시 확인한다.
 7. TUI plan/history/diff/why projection
 8. approve 후 continuation
 
+승인 대기 상태 전이는 provider loop 종료까지 하나의 계약이다. 유효한 최초 Plan 또는 material patch
+뒤에는 같은 prompt cycle의 provider 호출이 정확히 끝나고, 후속 tool call과 Todo/Goal maintenance가
+실행되지 않는지 session-level test로 검증한다. 반대로 invalid Plan과 승인 유지 structural patch는 모델이
+같은 turn에서 복구·계속할 수 있어야 한다. 안전 gate에 일부러 부수효과를 시도하게 한 뒤 차단되는 것을
+정상 제어 흐름으로 사용하지 않는다.
+
 작은 execution feedback을 Plan patch로 우회하지 않는다. 실패 분류를 추가한다면 실제 사용자 경험이
 어떤 승인·재시도 동작으로 이어지는지 contract test로 고정한다.
+
+delegated Lane 계약을 변경할 때는 Work Unit과 reviewer의 strict output schema, persisted Lane 필드,
+Observation/evidence 귀속, candidate integration gate, bounded repair, Wave settlement와 restart projection을
+같이 확인한다. child의 자연어 summary를 파싱해 Plan 변경 여부를 추론하지 말고 구조화된 `plan_impact`를
+Runtime에서 판정한다. child가 Plan을 직접 patch하거나 승인하게 만들지 않는다.
 
 ## 7. ZZ Knowledge 변경 규칙
 

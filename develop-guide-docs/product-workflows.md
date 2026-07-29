@@ -107,6 +107,12 @@ Plan이 만들어지면 사용자는 다음을 확인한다.
 /zzw approve-plan
 ```
 
+정상 UI에서는 Plan 제안 도구 카드 하나에 단계 요약과 승인 명령이 표시된 뒤 agent가 입력 대기 상태가
+된다. 승인 전 agent가 다시 상태를 조회하거나 실행을 시도해 안전 차단을 받고, 같은 승인 안내와 Todo를
+반복하는 것은 회귀다. 유효한 Plan 제안 또는 material patch는 현재 모델 turn을 끝내며 다음 모델 요청은
+`/zzw approve-plan` 같은 새 사용자 입력이 있어야만 시작한다. 잘못된 Plan 제안은 예외로, 구조화된 오류를
+모두 고치기 위해 같은 turn을 계속한다.
+
 승인 명령은 단지 DB 필드만 바꾸고 끝나면 안 된다. 승인 성공 후 Goal continuation을 요청해 첫
 dependency-ready step을 자동으로 실행해야 한다. 실행이 시작되지 않으면 먼저 `/zzw status`에서
 다음을 확인한다.
@@ -125,12 +131,17 @@ Goal이 일시 중지 상태라면 `/zzw-goal resume`이 먼저 필요하다. Pl
 작업하면서 Plan은 바뀔 수 있다.
 
 - 타입 오류, test feedback, 승인된 로컬 인프라 기동: 같은 step에서 처리
-- 승인 범위 안의 step 분해·milestone 구체화: structural patch, 기본적으로 승인 유지
-- 새로운 위험 작업, 권한 확대, 성공 조건 약화: material patch, 사용자 재승인
+- 승인 범위 안의 step 분해·milestone 구체화·동일 validator 교체·검증 환경 준비: structural patch, 기본적으로 승인 유지
+- 새로운 위험 작업, 권한 확대, 성공 조건 약화, 새 executor 권한 또는 validator 명령 변경: material patch, 사용자 재승인
 
 따라서 Plan version 증가 자체는 이상이 아니다. 그러나 작은 오류마다 material patch와 승인을
 요청하면 잘못된 UX다. `/zzw diff <version>`과 `/zzw why <step-id>`는 왜 변경이 필요했는지,
 무엇이 보존됐는지를 보여 줘야 한다.
+
+검증 실패가 DB·Kafka·Docker 같은 승인된 환경 전제 때문이면 Plan을 새 버전으로 만들지 않는다.
+`missing-precondition`으로 분류한 뒤 같은 validation 단계에서 준비 명령을 실행하고, 성공 evidence를
+보고한 다음 exact validator를 재시도한다. 이 흐름은 승인 요청 없이 계속되며 준비 명령의 결과를
+검증 통과 증거로 오인하지 않는다.
 
 ## 7. 상태·증거·operation 확인
 
@@ -139,6 +150,7 @@ Goal이 일시 중지 상태라면 `/zzw-goal resume`이 먼저 필요하다. Pl
 /zzw plan
 /zzw evidence
 /zzw operations
+/zzw lanes
 ```
 
 각 명령의 역할:
@@ -152,8 +164,35 @@ Goal이 일시 중지 상태라면 `/zzw-goal resume`이 먼저 필요하다. Pl
 | `/zzw why <step-id>`  | 이 step이 왜 존재하고 어떤 evidence·observation과 연결되는가? |
 | `/zzw evidence`       | 검증 근거는 trusted/fresh한가?                                |
 | `/zzw operations`     | 중단되거나 미해결인 side effect가 있는가?                     |
+| `/zzw lanes`          | 어떤 validator/subagent가 어느 Wave·자원에서 어떤 상태인가?   |
 
 상태줄은 이 정보를 압축한 projection이다. 상세 판단은 slash command와 Registry 내용을 우선한다.
+
+Plan에 동시에 ready인 단계가 여러 개 있어도 ZZW가 모두 병렬 실행하는 것은 아니다. 기본
+`zzworkflow.execution.mode=validation`에서는 독립 validator 명령만 bounded Wave로 실행한다.
+`safe-parallel`을 선택하면 resource claim이 충돌하지 않는 read-only/isolated-write subagent도 실행하며,
+Primary workspace patch 통합은 항상 하나씩 수행한다. 자세한 계약은
+[parallel-execution.md](parallel-execution.md)를 따른다.
+
+실행 방식, Work Unit 분해와 적대 리뷰는 서로 독립된 선택이다. `serial`에서도 Work Unit과 reviewer를
+하나씩 실행할 수 있고, `safe-parallel`에서도 적대 리뷰를 끌 수 있다. model selector는 사용자 선택값이며
+runtime은 선택된 모델의 가격이나 상대적 능력을 추정해 정책을 바꾸지 않는다.
+
+Work Unit 설정이 활성화되면 `/zzw plan`과 `/zzw status`에는 각 work 단계의 위임 또는 Primary 유지 판단이
+표시된다. 판단이 누락된 Plan은 승인할 수 없다. 위임 대상이 0개여도 “후보가 없었다”로 숨기지 않고 각
+단계의 `retain-primary` 이유를 확인할 수 있어야 한다.
+
+설정을 켜기 전에 이미 저장해 둔 draft Plan은 예외적으로 다시 만들 필요가 없다. `/zzw approve-plan`이
+기존 executor와 권한을 그대로 보존하는 판단 메타데이터만 채워 승인한다. 새 Plan을 현재 정책 아래에서
+제안할 때 판단이 빠진 경우에는 이 호환 경로를 적용하지 않고 제안 단계에서 거절한다.
+
+기존 승인 Plan이 판단 계약 없이 만들어진 뒤 Work Unit을 켠 경우, 현재 in-progress Primary 단계는 중간에
+취소하지 않는다. 그 단계가 settle된 다음 `assess_delegation_and_patch_plan`으로 전환하고 남은 pending
+work 단계의 판단을 한 번의 최소 patch로 보완한다. 이 경계 전에는 새 ordinary mutation을 허용하지 않는다.
+
+위임 중 새 사실이 나오더라도 child가 Plan을 바꾸지는 않는다. `/zzw lanes`의 `plan-impact`는
+`execution`이면 같은 Work Unit repair, `structural`이면 Plan 부분 패치, `contract`이면 사용자 결정이
+필요하다는 뜻이다. structural·contract 후보 patch는 Primary에 적용되지 않은 채 artifact로 보존된다.
 
 ## 8. Pause, 종료, 재개
 

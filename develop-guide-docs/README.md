@@ -19,6 +19,7 @@
 | [architecture.md](architecture.md)                     | 시스템 구조         | package 경계, CLI 부팅, 상태 저장 위치를 이해할 때              |
 | [architecture-decisions.md](architecture-decisions.md) | 결정 기록           | 채택·폐기된 대안과 변경 이유를 확인할 때                        |
 | [controlled-workflow.md](controlled-workflow.md)       | ZZW 구현 계약       | Task/Spec/Plan DAG, 승인, evidence, recovery를 수정할 때        |
+| [parallel-execution.md](parallel-execution.md)         | ZZW 병렬 실행 계약  | Wave/Lane, 자원 충돌, validation·subagent 병렬화를 수정할 때    |
 | [knowledge-system.md](knowledge-system.md)             | Knowledge 구현 계약 | taxonomy, bank, Hindsight wrapper, outbox, curation을 수정할 때 |
 | [engineering-guidelines.md](engineering-guidelines.md) | 구현 품질 기준      | 코드·prompt·TUI·SQLite·test를 설계하고 리뷰할 때                |
 | [development-workflow.md](development-workflow.md)     | 실행 절차           | 개발 환경 설치, 구현, 테스트, 빌드, 로컬 설치를 할 때           |
@@ -45,7 +46,8 @@
 1. [design-philosophy.md](design-philosophy.md)의 승인·Plan·evidence 원칙
 2. [product-workflows.md](product-workflows.md)의 ZZW 사용자 흐름
 3. [controlled-workflow.md](controlled-workflow.md)의 상태와 API 계약
-4. [engineering-guidelines.md](engineering-guidelines.md)의 schema/persistence/test 규칙
+4. [parallel-execution.md](parallel-execution.md)의 Wave/Lane, 격리, 통합과 복구 계약
+5. [engineering-guidelines.md](engineering-guidelines.md)의 schema/persistence/test 규칙
 
 ### ZZ Knowledge를 수정하는 개발자
 

@@ -38,6 +38,8 @@ import {
 	type IsolationHandle,
 	mergeTaskBranches,
 	type NestedRepoPatch,
+	parseIsolationMode,
+	type TaskIsolationMode,
 	type WorktreeBaseline,
 } from "./worktree";
 
@@ -58,6 +60,45 @@ export async function prepareIsolationContext(cwd: string): Promise<IsolationCon
 	const repoRoot = await getRepoRoot(cwd);
 	const baseline = await captureBaseline(repoRoot);
 	return { repoRoot, baseline };
+}
+
+export interface IsolatedWorkspaceExecutionOptions {
+	context: IsolationContext;
+	sourceCwd: string;
+	ownerId: string;
+	isolationMode: Exclude<TaskIsolationMode, "none">;
+	initialPatchPath?: string;
+}
+
+/**
+ * Execute a non-agent operation inside a disposable copy-on-write workspace.
+ * The workspace starts from the same repository contents as the parent and is
+ * always discarded. This is used by validators that may write caches,
+ * coverage, snapshots, or generated output but whose mutations must never be
+ * integrated into the primary workspace.
+ */
+export async function runInIsolatedWorkspace<T>(
+	options: IsolatedWorkspaceExecutionOptions,
+	execute: (cwd: string) => Promise<T>,
+): Promise<T> {
+	const relativeCwd = path.relative(options.context.repoRoot, options.sourceCwd);
+	if (relativeCwd.startsWith("..") || path.isAbsolute(relativeCwd)) {
+		throw new Error("Validator cwd is outside the isolated repository root.");
+	}
+	const handle = await ensureIsolation(
+		options.context.repoRoot,
+		options.ownerId,
+		parseIsolationMode(options.isolationMode),
+	);
+	try {
+		if (options.initialPatchPath) {
+			const patchText = await Bun.file(options.initialPatchPath).text();
+			if (patchText.trim()) await git.patch.applyText(handle.mergedDir, patchText);
+		}
+		return await execute(path.join(handle.mergedDir, relativeCwd));
+	} finally {
+		await cleanupIsolation(handle);
+	}
 }
 
 /** Build a commit-message callback for branch/nested commits; `undefined` ⇒ fall back to generic message. */

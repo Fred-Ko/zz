@@ -66,6 +66,7 @@ function createHarness(
 	let sessionId = "session-1";
 	let id = 0;
 	let captureIndex = 0;
+	let workUnitsEnabled = false;
 	const host: TaskLifecycleHost = {
 		getSessionId: () => sessionId,
 		getCwd: () => "/repo",
@@ -98,6 +99,16 @@ function createHarness(
 			return '<knowledge-working-set authoritative="false">advisory</knowledge-working-set>';
 		},
 		planPatchApprovalMode: () => planPatchApprovalMode,
+		executionSettings: () => ({
+			mode: "validation",
+			validationConcurrency: 4,
+			subagentConcurrency: 3,
+			isolationMode: "auto",
+			preserveFailedLanes: true,
+			rollingEpoch: true,
+			workUnits: { enabled: workUnitsEnabled, model: "*" },
+			adversarialReview: { enabled: true, model: "*", maxRepairAttempts: 1 },
+		}),
 		now: () => now,
 		mintId: kind => `${kind}-${++id}`,
 	};
@@ -110,6 +121,9 @@ function createHarness(
 		recallStages,
 		setSessionId: (value: string) => {
 			sessionId = value;
+		},
+		setWorkUnitsEnabled: (enabled: boolean) => {
+			workUnitsEnabled = enabled;
 		},
 		advance: (milliseconds: number) => {
 			now += milliseconds;
@@ -278,6 +292,69 @@ describe("task lifecycle", () => {
 					validators: ["yarn verify"],
 				},
 			],
+		});
+	});
+
+	it("preserves a stored Plan executor when Work Unit policy is enabled before approval", async () => {
+		const harness = createHarness();
+		const runtime = new TaskLifecycleRuntime(harness.host);
+		await runtime.handleGoalEvent({ type: "created", goal: createGoal() });
+		const specification = runtime.state?.specification;
+		await runtime.proposePlan({
+			basedOnSpecVersion: 1,
+			steps: [
+				{
+					id: "legacy-primary-work",
+					phase: "Implementation",
+					content: "Implement the previously planned change",
+					kind: "work",
+					dependsOn: [],
+					expectedEffects: ["Source changes"],
+					allowedTools: ["write"],
+					allowedTargets: [],
+					postconditions: ["Implementation evidence exists"],
+					successConditionIds: [],
+					verificationIds: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "legacy-validation",
+					phase: "Validation",
+					content: "bun test task-lifecycle.test.ts",
+					kind: "validation",
+					dependsOn: ["legacy-primary-work"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Validator passes"],
+					successConditionIds: specification?.successCriteria?.map(item => item.id) ?? [],
+					verificationIds: specification?.verificationRequirements?.map(item => item.id) ?? [],
+					validators: ["bun test task-lifecycle.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+			],
+		});
+		expect(runtime.state?.plan.steps[0]?.execution).toBeUndefined();
+
+		harness.setWorkUnitsEnabled(true);
+		const approved = await runtime.approvePlan();
+
+		expect(approved).toMatchObject({ version: 2, approval: "approved" });
+		expect(approved.steps[0]).toMatchObject({
+			id: "legacy-primary-work",
+			execution: {
+				executor: "primary",
+				delegationAssessment: {
+					decision: "retain-primary",
+					reasonCode: "exclusive-resource",
+				},
+			},
+		});
+		expect(new TaskLifecycleRuntime(harness.host).state?.plan.steps[0]).toMatchObject({
+			execution: { executor: "primary", delegationAssessment: { decision: "retain-primary" } },
 		});
 	});
 
@@ -561,6 +638,115 @@ describe("task lifecycle", () => {
 		});
 	});
 
+	it("carries approval across an equivalent validator replacement and supersedes the failed node", async () => {
+		const harness = createHarness();
+		const runtime = new TaskLifecycleRuntime(harness.host);
+		await runtime.handleGoalEvent({ type: "created", goal: createGoal() });
+		await activatePlan(runtime);
+
+		await runtime.patchPlan({
+			basedOnPlanVersion: 2,
+			addSteps: [
+				{
+					id: "prepare-validator",
+					phase: "Validation preparation",
+					content: "Prepare the already approved local validation service",
+					kind: "work",
+					dependsOn: ["work-1"],
+					expectedEffects: ["The local validation prerequisite is ready"],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["The prerequisite command succeeds"],
+					successConditionIds: [],
+					verificationIds: [],
+					validators: [],
+					rerunPolicy: "safe",
+					riskClass: "low",
+				},
+				{
+					id: "verify-2",
+					phase: "Validation",
+					content: "Retry the exact approved validator after preparation",
+					kind: "validation",
+					dependsOn: ["prepare-validator"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Validator passes"],
+					successConditionIds: runtime.state?.specification.successCriteria?.map(item => item.id) ?? [],
+					verificationIds: [],
+					validators: ["bun test task-lifecycle.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+					supersedes: ["verify-1"],
+					execution: {
+						executor: "validator",
+						resourceClaims: [{ kind: "service", key: "test-runtime", access: "exclusive" }],
+						isolation: "snapshot",
+						integration: "none",
+						failureDomain: "step",
+					},
+				},
+			],
+			updateSteps: [],
+			removeStepIds: [],
+			preserveStepIds: [],
+			contradictedAssumptions: [],
+			failedStepIds: ["verify-1"],
+			rationale: "Prepare an approved prerequisite and retry the unchanged validator",
+		});
+
+		expect(runtime.state).toMatchObject({
+			phase: "READY",
+			plan: { approval: "approved", approvalImpact: "structural" },
+		});
+		expect(runtime.state?.plan.steps.find(step => step.id === "verify-1")).toMatchObject({
+			status: "superseded",
+			supersededBy: ["verify-2"],
+		});
+	});
+
+	it("requires renewed approval when a replacement changes the validator command", async () => {
+		const harness = createHarness();
+		const runtime = new TaskLifecycleRuntime(harness.host);
+		await runtime.handleGoalEvent({ type: "created", goal: createGoal() });
+		await activatePlan(runtime);
+
+		await runtime.patchPlan({
+			basedOnPlanVersion: 2,
+			addSteps: [
+				{
+					id: "verify-different-command",
+					phase: "Validation",
+					content: "Use a different validator command",
+					kind: "validation",
+					dependsOn: ["work-1"],
+					expectedEffects: [],
+					allowedTools: ["bash"],
+					allowedTargets: [],
+					postconditions: ["Alternative validator passes"],
+					successConditionIds: runtime.state?.specification.successCriteria?.map(item => item.id) ?? [],
+					verificationIds: runtime.state?.specification.verificationRequirements?.map(item => item.id) ?? [],
+					validators: ["bun test alternative.test.ts"],
+					rerunPolicy: "safe",
+					riskClass: "low",
+					supersedes: ["verify-1"],
+				},
+			],
+			updateSteps: [],
+			removeStepIds: [],
+			preserveStepIds: [],
+			contradictedAssumptions: [],
+			failedStepIds: ["verify-1"],
+			rationale: "Change the approved completion validator",
+		});
+
+		expect(runtime.state).toMatchObject({
+			phase: "AWAITING_USER",
+			plan: { approval: "draft", approvalImpact: "material" },
+		});
+	});
+
 	it("requires approval for every Plan patch when configured in always mode", async () => {
 		const harness = createHarness([createWorkspace()], "always");
 		const runtime = new TaskLifecycleRuntime(harness.host);
@@ -676,6 +862,112 @@ describe("task lifecycle", () => {
 			plan: { approval: "approved", status: "current", version: 2 },
 			reconciliation: undefined,
 		});
+	});
+
+	it("repairs a validation precondition inside the approved step before retrying its exact command", async () => {
+		const harness = createHarness();
+		const runtime = new TaskLifecycleRuntime(harness.host);
+		await runtime.handleGoalEvent({ type: "created", goal: createGoal() });
+		await activatePlan(runtime);
+
+		const implementation = await runtime.prepareOperation({
+			toolCallId: "implementation",
+			toolName: "write",
+			tier: "write",
+			args: { path: "src/lifecycle.ts" },
+		});
+		await runtime.settleOperation("implementation", false);
+		const implementationEvidenceId = runtime.state?.evidence.find(
+			item => item.operationId === implementation?.id,
+		)?.id;
+		if (!implementationEvidenceId) throw new Error("expected implementation evidence");
+		await runtime.reportStepResult({
+			stepId: "work-1",
+			status: "completed",
+			classification: "matched",
+			evidenceIds: [implementationEvidenceId],
+			unexpectedEffects: [],
+		});
+
+		const failedValidation = await runtime.prepareOperation({
+			toolCallId: "validator-before-service",
+			toolName: "bash",
+			tier: "exec",
+			args: { command: "bun test task-lifecycle.test.ts" },
+		});
+		await runtime.settleOperation("validator-before-service", true);
+		const failedEvidenceId = runtime.state?.evidence.find(item => item.operationId === failedValidation?.id)?.id;
+		if (!failedEvidenceId) throw new Error("expected failed validation evidence");
+		expect(runtime.state?.reconciliation?.requiredAction).toBe("classify-result");
+
+		await runtime.reportStepResult({
+			stepId: "verify-1",
+			status: "blocked",
+			classification: "missing-precondition",
+			evidenceIds: [failedEvidenceId],
+			unexpectedEffects: [],
+			observedEffects: ["The approved validator requires its local service to be reset"],
+		});
+		expect(runtime.state).toMatchObject({
+			phase: "RECONCILING",
+			planVersion: 2,
+			plan: { approval: "approved", status: "current" },
+			reconciliation: { requiredAction: "satisfy-approved-precondition" },
+		});
+		await expect(
+			runtime.patchPlan({
+				basedOnPlanVersion: 2,
+				addSteps: [],
+				updateSteps: [{ id: "verify-1", content: "Rewrite validation for an environment reset" }],
+				removeStepIds: [],
+				preserveStepIds: [],
+				contradictedAssumptions: [],
+				failedStepIds: ["verify-1"],
+				rationale: "Patch instead of satisfying the approved precondition",
+			}),
+		).rejects.toThrow("PLAN_PATCH_NOT_REQUIRED");
+
+		const remedy = await runtime.prepareOperation({
+			toolCallId: "reset-validation-service",
+			toolName: "bash",
+			tier: "exec",
+			args: { command: "docker compose down" },
+		});
+		await runtime.settleOperation("reset-validation-service", false);
+		const remedyEvidenceId = runtime.state?.evidence.find(item => item.operationId === remedy?.id)?.id;
+		if (!remedyEvidenceId) throw new Error("expected successful prerequisite evidence");
+		await expect(
+			runtime.prepareOperation({
+				toolCallId: "validator-too-early",
+				toolName: "bash",
+				tier: "exec",
+				args: { command: "bun test task-lifecycle.test.ts" },
+			}),
+		).rejects.toThrow("Record successful precondition evidence");
+
+		await runtime.reportStepResult({
+			stepId: "verify-1",
+			status: "progress",
+			classification: "matched",
+			evidenceIds: [remedyEvidenceId],
+			unexpectedEffects: [],
+			observedEffects: ["The local validation service was reset successfully"],
+		});
+		expect(runtime.state).toMatchObject({
+			phase: "READY",
+			planVersion: 2,
+			plan: { approval: "approved", status: "current" },
+			reconciliation: undefined,
+		});
+		expect(runtime.state?.plan.steps.find(step => step.id === "verify-1")?.status).toBe("pending");
+
+		const retry = await runtime.prepareOperation({
+			toolCallId: "validator-after-service",
+			toolName: "bash",
+			tier: "exec",
+			args: { command: "bun test task-lifecycle.test.ts" },
+		});
+		expect(retry?.validator).toBe("bun test task-lifecycle.test.ts");
 	});
 
 	it("rejects Plan patch churn while a first execution failure only needs a changed retry condition", async () => {
@@ -937,6 +1229,7 @@ describe("task lifecycle", () => {
 		if (!persisted) throw new Error("expected persisted state");
 		const legacyState = structuredClone(persisted) as unknown as Record<string, unknown>;
 		legacyState.schemaVersion = 1;
+		Reflect.deleteProperty(legacyState, "execution");
 		const legacyPlan = legacyState.plan;
 		if (
 			!legacyPlan ||
@@ -971,6 +1264,7 @@ describe("task lifecycle", () => {
 
 		const restarted = new TaskLifecycleRuntime(harness.host);
 		expect(restarted.state).toMatchObject({ schemaVersion: TASK_LIFECYCLE_SCHEMA_VERSION, planVersion: 2 });
+		expect(restarted.state?.execution).toEqual({ waves: [], lanes: [] });
 		expect(restarted.state?.plan.steps[0]).toMatchObject({
 			originPlanVersion: 1,
 			lastChangedPlanVersion: 2,

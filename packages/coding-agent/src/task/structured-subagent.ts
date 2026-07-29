@@ -85,6 +85,8 @@ export interface StructuredSubagentRequest {
 	context?: string;
 	agent?: string;
 	model?: string | string[];
+	/** Disable auth failure fallback to the parent model for controller-owned exact model contracts. */
+	allowModelAuthFallback?: boolean;
 	/** Presence, rather than truthiness, makes this the highest-priority schema. */
 	outputSchema?: unknown;
 	schemaMode?: StructuredSubagentSchemaMode;
@@ -113,6 +115,12 @@ export interface StructuredSubagentRequest {
 	maxRuntimeMs?: number;
 	signal?: AbortSignal;
 	onProgress?: (progress: AgentProgress) => void;
+	/**
+	 * Host-enforced capability envelope for controller-owned child runs.
+	 * Presence disables discovered tools, MCP, extensions, IRC, and recursive
+	 * spawning; the child receives only these tools plus the required yield tool.
+	 */
+	allowedTools?: string[];
 }
 
 /** A normalized preflight result, reusable by tests and adapters. */
@@ -265,7 +273,15 @@ export async function resolveEffectiveSubagentPolicy(
 		);
 	}
 
-	const effectiveAgent = planMode ? createPlanModeAgent(agent) : agent;
+	const baseAgent = planMode ? createPlanModeAgent(agent) : agent;
+	const effectiveAgent = request.allowedTools
+		? {
+				...baseAgent,
+				tools: [...request.allowedTools],
+				spawns: undefined,
+				prewalk: undefined,
+			}
+		: baseAgent;
 	const schema = resolveSchema(request, effectiveAgent);
 	if (schema.source === "caller" || (schema.source !== "none" && schema.mode === "strict")) {
 		const { error } = buildOutputValidator(schema.schema);
@@ -276,7 +292,8 @@ export async function resolveEffectiveSubagentPolicy(
 		}
 	}
 	const agentModelOverrides = request.session.settings.get("task.agentModelOverrides");
-	const parentActiveModelPattern = request.session.getActiveModelString?.();
+	const parentActiveModelPattern =
+		request.allowModelAuthFallback === false ? undefined : request.session.getActiveModelString?.();
 	const modelOverride = resolveAgentModelPatterns({
 		settingsOverride: request.model ?? agentModelOverrides[agentName],
 		agentModel: effectiveAgent.model,
@@ -373,7 +390,8 @@ function buildExecutorOptions(
 		getArtifactsDir: session.getArtifactsDir ?? (() => null),
 		getSessionId: session.getSessionId ?? (() => null),
 	};
-	const enableMCP = !policy.planMode && (session.enableMCP ?? true);
+	const restricted = policy.planMode || request.allowedTools !== undefined;
+	const enableMCP = !restricted && (session.enableMCP ?? true);
 	return {
 		cwd: session.cwd,
 		additionalDirectories: session.additionalDirectories,
@@ -408,7 +426,7 @@ function buildExecutorOptions(
 		enableLsp: policy.enableLsp,
 		enableIrc: policy.enableIrc,
 		maxRuntimeMs: request.maxRuntimeMs,
-		restrictToolNames: policy.planMode,
+		restrictToolNames: restricted,
 		keepAlive: request.keepAlive,
 		signal: request.signal,
 		eventBus: session.eventBus,
@@ -424,8 +442,8 @@ function buildExecutorOptions(
 		workspaceTree: session.workspaceTree,
 		promptTemplates: session.promptTemplates,
 		rules: session.rules,
-		preloadedExtensionPaths: policy.planMode ? [] : session.extensionPaths,
-		preloadedCustomToolPaths: policy.planMode ? [] : session.customToolPaths,
+		preloadedExtensionPaths: restricted ? [] : session.extensionPaths,
+		preloadedCustomToolPaths: restricted ? [] : session.customToolPaths,
 		localProtocolOptions,
 		parentArtifactManager: session.getArtifactManager?.() ?? undefined,
 		parentTelemetry: session.getTelemetry?.(),

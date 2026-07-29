@@ -75,6 +75,9 @@
 - 상태: 채택
 - 결정: 초기 Plan과 material patch는 사용자 승인을 요구한다. 승인 범위 안의 structural patch는
   기본적으로 승인을 상속한다.
+- 경계: 실패한 validator를 동일 exact command와 기존 executor/tool/target/risk envelope로 교체하거나
+  승인된 검증 전제를 준비하는 단계는 structural이다. validator 명령, executor 권한, 위험 또는 외부
+  부수효과 범위가 바뀔 때만 material이다.
 - 설정: `zzworkflow.planPatchApproval: material`; 엄격한 환경에서는 `always` 선택 가능.
 - 근거: 모든 수정에 승인하면 작업 대신 계획 수정과 승인 요청이 반복된다.
 
@@ -85,6 +88,8 @@
   dependency, 권한, 성공·검증 계약이 바뀔 때만 Plan을 patch한다.
 - 근거: `ECONNREFUSED`, Docker daemon 미기동 같은 문제에 매번 새 Plan을 만들 필요가 없다.
 - 결과: plan churn, 승인 폭주, 불필요한 downstream invalidation을 줄인다.
+- 실행: validation의 첫 실패는 `classify-result`로 남긴다. `missing-precondition`이면 같은 단계의 승인된
+  범위에서 준비 operation을 수행하고 성공 evidence를 보고한 뒤 exact validator를 재실행한다.
 
 ## D-010 — completion은 fresh evidence로만 판정한다
 
@@ -179,6 +184,146 @@
 - 근거: 장기 agent 작업에서는 “응답 중인가, 어떤 모델인가, 어느 worktree인가, 어떤 Task phase인가”가
   핵심 운영 정보다.
 - 제약: TUI renderer는 logger, tab replacement, ANSI-aware truncation, home path 축약 계약을 지킨다.
+
+## D-021 — ZZW가 병렬 실행과 통합을 소유한다
+
+- 상태: 채택
+- 대체한 안: 모델이 여러 bash/tool call을 내도록 유도, 일반 `task` batch를 ZZW operation 하나로 실행
+- 결정: Plan DAG의 ready set에서 resource conflict graph와 Execution Wave를 runtime이 만들고, 모든
+  실행을 Wave/Lane/Step에 귀속한다. 기존 tool fan-out, subagent, isolation은 하위 executor로만 쓴다.
+- 근거: 모델 호출 형태나 바깥 `task` operation 하나에 의존하면 child별 evidence, crash recovery,
+  cancellation, Plan lineage와 resource 충돌을 결정적으로 기록할 수 없다.
+- 제약: Primary workspace 통합은 직렬이며 최종 completion은 통합 snapshot의 fresh evidence만 사용한다.
+- 기본 활성화: validator만 병렬화하는 `validation`; 격리 subagent는 승인된 execution 계약과
+  `safe-parallel` 설정이 모두 있어야 한다.
+- 상세 계약: [parallel-execution.md](parallel-execution.md)
+
+## D-022 — 고정 Wave를 Rolling Execution Epoch로 발전시킨다
+
+- 상태: 채택 · cohort 단위 구현
+- 현재 동작: 같은 승인·snapshot 계보의 ready frontier를 다시 계산해 같은 epoch에 동적 Lane을 추가한다.
+  한 번에 admission된 cohort 안은 아직 all-settled이며 Lane completion event 단위 최적화는 남아 있다.
+- 결정: Lane completion마다 ready frontier를 다시 계산하고, 같은 승인·snapshot 계보·resource policy 안의
+  후속 Lane을 열린 execution epoch에 durable admission한다.
+- 근거: 깊고 비대칭인 DAG에서 느린 형제가 이미 ready인 descendant를 막는 batch barrier를 제거한다.
+- barrier: Primary snapshot, Plan/spec/승인 envelope가 바뀌거나 recovery·전역 검증 경계가 생기면 새
+  epoch를 연다.
+- 보존할 불변식: 실행 전 journal flush, resource lock, Lane별 evidence, integration 직렬화, unknown
+  operation 자동 재실행 금지.
+- 상세 로드맵: [parallel-execution.md](parallel-execution.md#13-로드맵-rolling-execution-epoch)
+
+## D-023 — Plan 의미 단위와 모델 위임 단위를 분리한다
+
+- 상태: 채택 · 기본 비활성화
+- 결정: Plan Step은 승인·dependency·성공 증거가 의미 있는 독립 결과 단위로 유지한다. 특정 모델의
+  가격이나 성능을 전제로 DAG를 파일 단위로 쪼개지 않고 Step 아래에 독립 검증 가능한 Work Unit을 둔다.
+- 모델 선택: `mechanical`, `local-reasoning`, `system-reasoning` capability class는 분해 가능성·위험
+  판정용으로 기록한다. 모든 Work Unit과 제한 repair는 하나의 사용자 선택 모델·effort를 공유하며
+  runtime은 selector의 가격·속도·성능 순위를 추론하지 않는다.
+- Work Unit 조건: 닫힌 scope와 출력 schema, 독립 resource, 결정적 validator, 되돌릴 수 있는 결과와
+  제한된 context를 요구한다.
+- 재처리: 결과가 계약이나 검증을 통과하지 못하면 동일 prompt를 무한 반복하지 않고 Work Unit selector로
+  제한 repair를 수행하거나 reconciliation으로 전환한다. 동일 승인 envelope를 벗어나는 변경은 Plan
+  patch와 material 재승인이 필요하다.
+- 근거: Plan의 의미 구조를 모델 제품·가격·추정 성능과 분리하면서 과분해의 context 복제·통합·검증
+  overhead를 통제한다.
+- 상세 로드맵: [parallel-execution.md](parallel-execution.md#14-capability-분류와-실행-단위-분해)
+
+## D-024 — 격리 write 결과는 선택적으로 독립 적대 리뷰를 거친다
+
+- 상태: 채택 · 설정으로 선택 가능
+- 결정: 설정상 eligible인 격리 workspace candidate patch는 작성자와 다른 새 read-only subagent의
+  적대적 리뷰와 exact validator를 모두 통과해야 Primary integration queue에 들어간다. implementer와
+  reviewer 모델은 사용자가 각각 선택하며 runtime은 어느 쪽이 더 비싸거나 강하다고 가정하지 않는다.
+- 독립성: reviewer는 작성자 reasoning을 상속하지 않고 base snapshot, Work Unit 계약, diff, 허용 범위와
+  validator만 새 context로 받는다. 작성자와 reviewer의 agent/session identity를 장부에 분리한다.
+- 권한: reviewer는 결함과 반례를 구조화해 보고할 뿐 patch 수정, Plan 변경, 승인과 통합을 할 수 없다.
+- 실패 처리: 설정된 횟수의 scoped repair 후 새 reviewer가 재검사한다. repair는 Work Unit selector를
+  재사용하며 반복 실패, critical finding 또는 reviewer 충돌은 reconciliation으로 전환한다. 승인
+  envelope가 바뀌면 material 재승인을 요구한다.
+- 증거: review pass는 advisory/observed evidence이며 verified evidence가 아니다. 결정적 validator와 최종
+  integration snapshot 검증을 대체하지 않는다.
+- 선택 정책: 모델 가격과 무관하게 사용자가 켠 Work Unit·review 정책과 capability 계약만 적용한다.
+- 설정: `zzworkflow.execution.workUnits.enabled`와
+  `zzworkflow.execution.adversarialReview.enabled`는 서로 독립이다. 전자는 기본 `false`, 후자는 기본
+  `true`이며 적대 리뷰는 capability와 관계없이 isolated-write candidate가 있을 때 실행된다.
+- 상세 로드맵:
+  [parallel-execution.md](parallel-execution.md#격리-write-후보의-적대적-리뷰-게이트)
+
+## D-025 — ZZW 격리 backend는 runtime이 자동 선택한다
+
+- 상태: 채택
+- 결정: ZZW는 filesystem별 격리 backend를 사용자 설정으로 노출하지 않고 native PAL의 `auto` resolver를
+  항상 사용한다.
+- 근거: backend는 사용자가 결정할 workflow 정책이 아니라 OS·filesystem capability에 따른 구현
+  세부사항이다. 잘못된 강제 선택은 성능 저하보다 실행 실패와 복구 복잡성을 먼저 만든다.
+- 관찰성: 선택된 backend와 fallback 여부·이유는 Lane 장부에 기록해 진단 가능성을 유지한다.
+- 범위: 일반 task subagent의 저수준 격리 설정은 upstream 호환 기능이므로 이 결정의 대상이 아니다.
+
+## D-026 — ZZW 모델 계약은 현재 인증된 concrete 모델만 허용한다
+
+- 상태: 채택
+- 결정: Work Unit implementer·repair는 하나의 모델 설정을 공유하고 적대 reviewer는 별도 모델 설정을
+  사용한다. 두 설정 모두 현재 세션의 `/model`에 노출되는 인증·허용 모델과 해당 모델이 실제 지원하는
+  effort만 선택할 수 있다. 자유 문자열, fuzzy pattern과 role alias는 받지 않는다.
+- 현재 모델: 기본값 `*`은 ZZW 내부에서만 “현재 세션 모델의 기본 effort”를 뜻하며 `*:high`처럼 지원
+  effort를 붙일 수 있다. Wave 준비 시 exact `provider/model[:effort]`로 고정해 Lane 장부에 기록한다.
+- 실패 정책: 저장된 explicit 모델이 로그아웃, provider 비활성화, catalog 변경 또는 `enabledModels`
+  scope 변경으로 선택 불가능해지면 Wave를 만들기 전에 차단한다. 다른 모델이나 부모 모델로 자동
+  fallback하지 않는다.
+- 근거: 승인·evidence가 특정 실행 Lane에 귀속되는 시스템에서 실제 실행 모델이 설정과 달라지면 비용
+  문제가 아니라 재현성·감사 가능성·사용자 선택권이 깨진다.
+- 비범위: 모델 간 가격·속도·성능 순위를 추론하거나 capability class에 특정 제품군을 자동 배정하지
+  않는다.
+
+## D-027 — delegated agent는 Plan 영향만 보고하고 Plan은 Runtime 경계에서 진화한다
+
+- 상태: 채택
+- 문제: Work Unit이 새 사실을 발견해도 자연어 observation만으로는 같은 단위의 구현 피드백인지 Plan
+  구조·Contract 변경인지 부모가 안정적으로 구분할 수 없다.
+- 결정: implementer와 독립 reviewer는 strict `plan_impact`를 `none`, `execution`, `structural`,
+  `contract` 중 하나로 제출한다. child는 Plan patch, 승인, integration 권한을 갖지 않는다.
+- Runtime: execution은 bounded repair로 흡수하고 Plan을 유지한다. structural·contract 후보는 patch
+  artifact를 보존하되 Primary에 통합하지 않고 새 epoch admission을 닫는다. 독립 Lane이 settle된 뒤
+  structural은 `patch-plan`, contract은 `request-user` reconciliation을 만든다.
+- 근거: delegation의 병렬 이점을 유지하면서도 Plan 변경 판단, evidence 귀속과 사용자 승인 경계를
+  자연어 추측이나 child 권한에 맡기지 않기 위함이다.
+- 상세 계약: [parallel-execution.md](parallel-execution.md#delegated-plan-impact-protocol)
+
+## D-028 — Plan 승인 대기는 host-owned terminal turn boundary다
+
+- 상태: 채택
+- 문제: Plan을 `draft`로 저장하고 write gate만 닫으면 같은 provider/tool loop는 계속 살아 있다. Goal은
+  작업을 계속하라고 지시하므로 모델이 상태를 재조회하거나 실행을 시도하고, 안전 차단·Todo reminder·승인
+  안내가 같은 turn에서 반복된다.
+- 결정: 유효한 `zzw_propose_plan`과 승인 대기를 만드는 material `zzw_patch_plan`은 배타 도구로
+  실행한다. 결과가 기록되고 Registry가 `AWAITING_USER`/`draft`임을 확인한 host는 현재 provider loop를
+  terminal tool-result 사유로 정상 종료하고 post-turn 자동 maintenance도 중단한다.
+- 복구 가능성: invalid Plan은 종료하지 않아 모델이 구조화된 issue를 같은 turn에서 고친다. 승인을
+  유지하는 structural patch도 종료하지 않는다. 다음 명시적 사용자 prompt는 terminal 상태를 지우고 새
+  cycle을 시작하며 `/zzw approve-plan` 성공 시 기존 continuation 계약이 실행을 재개한다.
+- 근거: approval은 모델이 우회할 수 없는 사용자 권한 경계이면서 동시에 명확한 대화 turn 경계다. 안전
+  gate는 경합과 결함의 최후 방어선이어야 하며 정상 흐름에서 반복적으로 발동하는 제어 장치가 아니다.
+- 검증: session-level mock provider test가 유효한 제안 뒤 provider call 1회, 후속 실행 0회와 invalid
+  제안의 동일-turn 복구 가능성을 고정한다.
+
+## D-029 — Work Unit 활성화 시 위임 판단은 Plan의 필수 계약이다
+
+- 상태: 채택
+- 문제: `work_units`를 선택 필드와 프롬프트 권고로만 두면 모델이 위임을 검토해 Primary를 선택한 것인지,
+  기능을 인식하지 못해 기본 Primary로 흘렀는지 장부에서 구분할 수 없다.
+- 결정: Work Unit이 활성화된 Plan의 모든 현재 work 단계는 `retain-primary`, `delegate-readonly`,
+  `delegate-isolated` 중 하나와 구조화된 reason code·근거를 기록한다. 누락은 Primary 기본값이 아니라
+  `DELEGATION_ASSESSMENT_MISSING` Plan 오류다.
+- 동적 인지: 현재 실행 방식, Work Unit과 적대 리뷰 활성화, model selector, 판단·Work Unit 개수는
+  workflow context와 `zzw_get_state`에 주입한다.
+- 독립성: 위임 판단은 누가 실행하는지를 정하고, execution mode는 Lane 동시성을 정하며, 적대 리뷰
+  설정은 isolated-write candidate의 review gate를 정한다. 세 결정은 서로 대신하지 않는다.
+- 관찰성: `/zzw status`와 `/zzw plan`은 위임, Primary 유지, 미평가와 이유를 표시한다.
+- 호환: Work Unit이 비활성인 기존 Plan은 계속 Primary-safe 기본 동작을 유지한다. 정책 활성화 전에
+  저장된 draft Plan은 `/zzw approve-plan`에서 기존 executor와 권한 envelope를 보존하는 판단
+  메타데이터만 정규화한 뒤 승인한다. 새 Plan 제안의 누락은 계속 거절한다. 이미 실행 중인 승인 Plan은
+  현재 단계를 취소하지 않고 settle 뒤 최소 Plan patch로 남은 pending 단계 판단을 보완한다.
 
 ## 결정 변경 절차
 

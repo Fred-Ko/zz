@@ -300,6 +300,12 @@ function migrateZZWorkflowSettings(raw: RawSettings): void {
 	}
 	delete raw["workflow.heartbeatIntervalSeconds"];
 	delete raw["workflow.workspaceLeaseSeconds"];
+	const zzExecution = isRecord(zzWorkflow.execution) ? zzWorkflow.execution : undefined;
+	if (zzExecution) {
+		delete zzExecution.isolationMode;
+		if (Object.keys(zzExecution).length === 0) delete zzWorkflow.execution;
+	}
+	delete raw["zzworkflow.execution.isolationMode"];
 	if (Object.values(zzWorkflow).some(value => value !== undefined)) raw.zzworkflow = zzWorkflow;
 	const retiredWorkflowKeys = new Set([
 		"workflow.autoqa",

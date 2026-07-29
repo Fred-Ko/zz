@@ -69,6 +69,7 @@ import {
 	ZZWorkflowReportStepResultTool,
 	ZZWorkflowSubmitVerificationTool,
 } from "./workflow-control";
+import { ZZWorkflowExecuteWaveTool } from "./workflow-execution";
 import { WriteTool } from "./write";
 import { isMountableUnderXdev, XdevRegistry } from "./xdev";
 import { YieldTool } from "./yield";
@@ -112,6 +113,7 @@ export * from "./todo";
 export * from "./tts";
 export * from "./vibe";
 export * from "./workflow-control";
+export * from "./workflow-execution";
 export * from "./write";
 export * from "./xdev";
 export * from "./yield";
@@ -435,6 +437,7 @@ export const BUILTIN_TOOLS: Record<BuiltinToolName, ToolFactory> = {
 	zzw_report_observation: s => new ZZWorkflowReportObservationTool(s),
 	zzw_report_step_result: s => new ZZWorkflowReportStepResultTool(s),
 	zzw_submit_verification: s => new ZZWorkflowSubmitVerificationTool(s),
+	zzw_execute_wave: s => new ZZWorkflowExecuteWaveTool(s),
 	manage_skill: ManageSkillTool.createIf,
 };
 

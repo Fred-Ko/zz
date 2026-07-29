@@ -166,6 +166,49 @@ describe("structured subagent primitive", () => {
 		expect(discover).not.toHaveBeenCalled();
 	});
 
+	it("enforces a controller-supplied child capability envelope", async () => {
+		mockDiscovery();
+		const dispatch = vi.spyOn(executorModule, "runSubprocess").mockResolvedValue(result());
+		const settled = await runStructuredSubagent(
+			request({ allowedTools: ["read", "grep"], enableIrc: true, retainArtifacts: true }),
+		);
+
+		expect(settled.policy.effectiveAgent).toMatchObject({
+			tools: ["read", "grep"],
+			spawns: undefined,
+			prewalk: undefined,
+		});
+		expect(dispatch.mock.calls[0]?.[0]).toMatchObject({
+			restrictToolNames: true,
+			enableMCP: false,
+			preloadedExtensionPaths: [],
+			preloadedCustomToolPaths: [],
+		});
+		expect(dispatch.mock.calls[0]?.[0].mcpManager).toBeUndefined();
+		await fs.rm(settled.artifactsDir, { recursive: true, force: true });
+	});
+
+	it("lets controller-owned exact model contracts disable parent-model auth fallback", async () => {
+		mockDiscovery();
+		const parentSession = session();
+		parentSession.getActiveModelString = () => "openai-codex/gpt-5.6-sol";
+
+		const normal = await resolveEffectiveSubagentPolicy(
+			request({ session: parentSession, model: "openrouter/z-ai/glm-5" }),
+		);
+		const strict = await resolveEffectiveSubagentPolicy(
+			request({
+				session: parentSession,
+				model: "openrouter/z-ai/glm-5",
+				allowModelAuthFallback: false,
+			}),
+		);
+
+		expect(normal.parentActiveModelPattern).toBe("openai-codex/gpt-5.6-sol");
+		expect(strict.modelOverride).toEqual(["openrouter/z-ai/glm-5"]);
+		expect(strict.parentActiveModelPattern).toBeUndefined();
+	});
+
 	it("leases temporary artifacts for a retained invocation and registers them for agent URLs", async () => {
 		mockDiscovery();
 		let artifactsDir: string | undefined;

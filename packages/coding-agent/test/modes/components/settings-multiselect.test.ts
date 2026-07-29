@@ -46,6 +46,7 @@ function createSelector(): SettingsSelectorComponent {
 			thinkingLevel: undefined,
 			availableThemes: ["dark"],
 			providers: [],
+			availableModels: [],
 			cwd: process.cwd(),
 		},
 		{

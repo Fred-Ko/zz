@@ -33,6 +33,7 @@ export const BUILTIN_TOOL_NAMES = [
 	"zzw_report_observation",
 	"zzw_report_step_result",
 	"zzw_submit_verification",
+	"zzw_execute_wave",
 	"manage_skill",
 ] as const;
 
@@ -46,6 +47,7 @@ export const ZZWORKFLOW_TOOL_NAMES = [
 	"zzw_report_observation",
 	"zzw_report_step_result",
 	"zzw_submit_verification",
+	"zzw_execute_wave",
 ] as const satisfies readonly BuiltinToolName[];
 
 /** Hidden built-ins: constructible and `--tools`-addressable, but never part of the default active set. */

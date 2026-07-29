@@ -213,6 +213,15 @@ function renderGoalMode(ctx: SegmentContext, mode: { enabled: boolean; paused: b
 	if (zzWorkflow) {
 		parts.push(zzWorkflow.phase);
 		parts.push(`P${zzWorkflow.planVersion}:${zzWorkflow.plan.approval ?? "draft"}`);
+		const activeWave = zzWorkflow.execution?.activeWaveId
+			? zzWorkflow.execution.waves.find(wave => wave.id === zzWorkflow.execution.activeWaveId)
+			: undefined;
+		if (activeWave) {
+			const lanes = zzWorkflow.execution.lanes.filter(lane => activeWave.laneIds.includes(lane.id));
+			parts.push(
+				`W:${lanes.filter(lane => lane.status === "running").length}↑/${lanes.filter(lane => lane.status === "prepared").length}…/${lanes.filter(lane => lane.status === "failed" || lane.status === "rejected").length}×`,
+			);
+		}
 		if (zzWorkflow.reconciliation) {
 			parts.push(`R:${zzWorkflow.reconciliation.classification ?? "분류"}`);
 		} else {

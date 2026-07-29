@@ -15,9 +15,13 @@ authoritative; recalled knowledge is advisory only.
    and evidence.
 2. Compare the step's expected effects, postconditions, assumptions, consumed
    artifacts, and rerun policy with the actual result.
-3. Report newly interpreted facts or contradictions with
+3. If the Lane has a delegated `planImpact`, verify its evidence and IDs against
+   Registry state. Treat `execution` as same-Work-Unit feedback, `structural` as
+   a Plan patch candidate, and `contract` as a user-decision boundary. The child
+   proposal is never authoritative by itself.
+4. Report newly interpreted facts or contradictions with
    `zzw_report_observation`, linked to evidence and affected IDs.
-4. Classify the step result with `zzw_report_step_result`:
+5. Classify the step result with `zzw_report_step_result`:
    - `matched`: expected progress or completion
    - `implementation-feedback`: a compile, lint, or test result identifies code
      to correct inside the current work step; the Plan contract remains valid
@@ -30,7 +34,7 @@ authoritative; recalled knowledge is advisory only.
    - `unexpected-effect`: the operation changed more or less than promised
    - `verification-failure`: an independent validator failed
    - `environment-changed`: the workspace fingerprint no longer matches
-5. Continue only according to the returned required action.
+6. Continue only according to the returned required action.
 
 ## Retry Rule
 
@@ -40,6 +44,12 @@ focused check. Report `missing-precondition`, satisfy it within approved
 authority, and retry the same step. If satisfying it needs authority not already
 approved, ask only for that action; do not rewrite the Plan unless scope or
 strategy also changes.
+
+For a validation step, `missing-precondition` opens the bounded
+`satisfy-approved-precondition` state. Use only the validation step's existing
+tools and targets for diagnosis or preparation. After a successful preparation
+operation, report `progress/matched` with its evidence; only then rerun the exact
+validator. Do not add a setup step merely to escape the validator command gate.
 
 Retry an `execution-failure` only when a concrete condition changed. State that
 condition in `changed_condition`; “try again” is not a changed condition. Respect

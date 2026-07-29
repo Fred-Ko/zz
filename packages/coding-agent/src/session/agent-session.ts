@@ -200,6 +200,7 @@ import { normalizeModelContextImages } from "../utils/image-loading";
 import { generateSessionTitle } from "../utils/title-generator";
 import { buildNamedToolChoice, isToolChoiceActive } from "../utils/tool-choice";
 import type { VibeModeState } from "../vibe/state";
+import { loadZZWorkflowConfig } from "../workflow/config";
 import { ZZWorkflowIntegration } from "../workflow/integration";
 import type { AgentSessionEvent, AgentSessionEventListener } from "./agent-session-events";
 import type {
@@ -569,6 +570,13 @@ export class AgentSession {
 	 * Cleared before every new prompt turn so the next turn evaluates cleanly.
 	 */
 	#yieldTerminationPending = false;
+	/**
+	 * Sticky across the current prompt run: an accepted Plan proposal that leaves
+	 * ZZWorkflow waiting for explicit approval is a user-decision boundary. The
+	 * provider loop, Todo reminders, and Goal continuations must not run again
+	 * until a fresh user prompt (normally `/zzw approve-plan`) starts.
+	 */
+	#zzWorkflowApprovalTerminationPending = false;
 	#synchronouslyTerminatedYieldToolCallIds = new Set<string>();
 	#providerSessionState = new Map<string, ProviderSessionState>();
 	readonly rawSseDebugBuffer: RawSseDebugBuffer;
@@ -576,6 +584,7 @@ export class AgentSession {
 	#resetPromptMaintenanceState(): void {
 		this.#recovery.resetForNewPrompt();
 		this.#yieldTerminationPending = false;
+		this.#zzWorkflowApprovalTerminationPending = false;
 	}
 
 	#acquirePowerAssertion(): void {
@@ -1177,6 +1186,8 @@ export class AgentSession {
 			},
 			publishPlanProjection: state => this.#publishWorkflowPlanProjection(state),
 			planPatchApprovalMode: () => this.settings.get("zzworkflow.planPatchApproval"),
+			executionMode: () => this.settings.get("zzworkflow.execution.mode"),
+			executionSettings: () => loadZZWorkflowConfig(this.settings).execution,
 		});
 		const configuredBeforeToolCall = this.agent.beforeToolCall;
 		this.agent.beforeToolCall = async (ctx, signal) => {
@@ -2491,6 +2502,17 @@ export class AgentSession {
 				.find((message): message is AssistantMessage => message.role === "assistant");
 			const msg = this.#lastAssistantMessage ?? fallbackAssistant;
 			this.#lastAssistantMessage = undefined;
+			if (this.#zzWorkflowApprovalTerminationPending) {
+				this.#lastSuccessfulYieldToolCallId = undefined;
+				this.#resetSessionStopContinuationState();
+				logger.debug("agent_end maintenance routing", {
+					reason: "zzworkflow-approval-boundary",
+					phase: this.#taskLifecycle.state?.phase,
+					planApproval: this.#taskLifecycle.state?.plan.approval,
+				});
+				await emitAgentEndNotification();
+				return;
+			}
 			if (!msg) {
 				this.#lastSuccessfulYieldToolCallId = undefined;
 				logger.debug("agent_end maintenance routing", {
@@ -2993,6 +3015,10 @@ export class AgentSession {
 		const result = this.#ttsr.afterToolCall(ctx);
 		if (isZZWorkflowGoalState(this.#goalModeState)) {
 			await this.#taskLifecycle.settleOperation(ctx.toolCall.id, result?.isError ?? ctx.isError, ctx.result);
+		}
+		if (this.#isZZWorkflowApprovalBoundaryToolResult(ctx.toolCall.name, result?.isError ?? ctx.isError)) {
+			this.#zzWorkflowApprovalTerminationPending = true;
+			this.agent.abort(TERMINAL_TOOL_RESULT_ABORT_REASON);
 		}
 		return result;
 	}
@@ -6194,6 +6220,13 @@ export class AgentSession {
 			record.type.length > 0 &&
 			record.type.every(item => typeof item === "string")
 		);
+	}
+
+	#isZZWorkflowApprovalBoundaryToolResult(toolName: string, isError: boolean | undefined): boolean {
+		if (isError || (toolName !== "zzw_propose_plan" && toolName !== "zzw_patch_plan")) return false;
+		if (!isZZWorkflowGoalState(this.#goalModeState)) return false;
+		const state = this.#taskLifecycle.state;
+		return state?.phase === "AWAITING_USER" && state.plan.approval === "draft";
 	}
 
 	#markTerminalYieldToolCall(toolCallId: string): void {

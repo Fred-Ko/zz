@@ -17,6 +17,7 @@ ZZ는 Bun 기반 모노레포로 구성된 터미널 코딩 에이전트다. 핵
 - 특별한 언어 요청이 없을 때 한국어를 기본 대화 언어로 주입
 - 상태줄 상세 다중 행 레이아웃
 - Goal 기반 영속 Task/Spec/Plan DAG와 검증·복구 수명주기
+- ZZW의 resource-aware Execution Wave와 격리된 병렬 검증·서브에이전트 실행
 - `zz`에 내장된 로컬 SQLite ZZWorkflow registry
 - 제거한 upstream memory를 대체하는 독립 ZZ Knowledge System
 - 자동 QA 보고 기능 제거
@@ -37,6 +38,7 @@ zz CLI / TUI
 
 ZZWorkflow (ZZW)                 ZZ Knowledge
 ├─ src/workflow                  ├─ src/knowledge
+├─ src/workflow/execution        │
 ├─ src/goals/task-lifecycle.ts   ├─ src/tools/knowledge-*.ts
 ├─ src/goals/runtime.ts          ├─ src/prompts/knowledge
 └─ src/tools/workflow-control.ts └─ src/skills/knowledge-operator
@@ -184,9 +186,10 @@ LSP는 파일을 읽거나 수정하는 대체 수단이 아니라 의미 기반
 - 서버 프로세스는 장기 실행·스트리밍 프로세스이므로 `Bun.spawn` 수명주기로 관리한다.
 - 기본 서버 설정은 `packages/coding-agent/src/lsp/defaults.json`, 사용자 설정은 `docs/lsp-config.md`를 따른다.
 
-상태줄은 model/effort, Goal 또는 ZZW phase, repository/worktree/branch, session, token/context,
-비용·시간을 폭에 맞춰 여러 행에 배치한다. 상태줄은 Registry와 session 상태의 projection이며 상태를
-직접 소유하지 않는다.
+상세 상태줄은 상태·작업·모델·작업공간·Git·컨텍스트·토큰·비용/한도·세션을 고정 의미 행으로
+분리한다. ZZW가 활성화되면 현재 Plan step, live Execution Wave와 activity를 별도 행으로 보여준다.
+같은 문맥 한도나 토큰 합계를 개별 수치와 중복 표시하지 않으며, 좁은 터미널에서도 행을 합치지 않고
+값만 축약한다. 상태줄은 Registry와 session 상태의 projection이며 상태를 직접 소유하지 않는다.
 
 ## 8. 자동 QA 제거 불변식
 

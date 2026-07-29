@@ -26,6 +26,7 @@ Read the smallest relevant guide before changing a subsystem:
 - [`develop-guide-docs/engineering-guidelines.md`](develop-guide-docs/engineering-guidelines.md) — implementation, persistence, TUI, testing, and documentation quality rules
 - [`develop-guide-docs/development-workflow.md`](develop-guide-docs/development-workflow.md) — setup, implementation, tests, build, and installation
 - [`develop-guide-docs/controlled-workflow.md`](develop-guide-docs/controlled-workflow.md) — ZZWorkflow(ZZW), Plan DAG, local SQLite recovery, operations, and evidence
+- [`develop-guide-docs/parallel-execution.md`](develop-guide-docs/parallel-execution.md) — ZZW Execution Wave, resource claims, parallel validation/subagents, integration, and recovery
 - [`develop-guide-docs/knowledge-system.md`](develop-guide-docs/knowledge-system.md) — independent ZZ Knowledge policy, Hindsight wrapper, outbox, and mental models
 - [`develop-guide-docs/upstream-and-release.md`](develop-guide-docs/upstream-and-release.md) — upstream synchronization, fork pushing, and release policy
 
@@ -41,6 +42,7 @@ Historical source:
 - When code changes product identity, user flow, commands, settings, package boundaries, persistence paths, state transitions, approval behavior, Knowledge policy, installation, or release behavior, update the owning current guide in the same change.
 - Update `project-identity.md` for mission/non-goal changes, `design-philosophy.md` for cross-cutting principles, `product-workflows.md` for user journeys, `architecture.md` for runtime/package boundaries, and `architecture-decisions.md` for accepted/replaced/deferred decisions.
 - Update `controlled-workflow.md` for ZZW contracts and `knowledge-system.md` for ZZ Knowledge contracts. Keep those systems independent: ZZW owns current task execution state; Knowledge owns advisory durable knowledge policy.
+- Update `parallel-execution.md` whenever ZZW ready-set scheduling, resource claims, Wave/Lane state, validation fan-out, subagent isolation, patch integration, cancellation, or parallel recovery changes.
 - Update `engineering-guidelines.md` when implementation or test standards change, `development-workflow.md` when runnable commands or installation steps change, and `upstream-and-release.md` when fork synchronization or release policy changes.
 - Verify documented commands and setting keys against their actual registries/schemas. Verify local Markdown links, run the repository formatter for changed current guides, and run `git diff --check` before handoff.
 - When renaming or removing a guide, update this map, `develop-guide-docs/README.md`, all incoming links, and any public docs that reference it. Do not use vague current-guide names such as `custom`, `new`, or `current`.

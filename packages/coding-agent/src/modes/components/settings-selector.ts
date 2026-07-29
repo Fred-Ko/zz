@@ -44,6 +44,7 @@ import type {
 import { SETTING_TABS, TAB_METADATA } from "../../config/settings-schema";
 import { getCurrentThemeName, getSelectListTheme, getSettingsListTheme, theme } from "../../modes/theme/theme";
 import { AUTO_THINKING, type ConfiguredThinkingLevel } from "../../thinking";
+import { buildZZWorkflowModelChoices, type ZZWSelectableModel } from "../../workflow/execution/model-selection";
 import { getTabBarTheme } from "../shared";
 import { bottomBorder, divider, row, topBorder } from "./overlay-box";
 import { handleInputOrEscape, PluginSettingsComponent } from "./plugin-settings";
@@ -498,6 +499,10 @@ export interface SettingsRuntimeContext {
 	availableThemes: string[];
 	/** Provider/source ids shown in /model. */
 	providers: string[];
+	/** Authenticated, enabled models shown by the current session's model selector. */
+	availableModels: readonly ZZWSelectableModel[];
+	/** Exact provider/model selector for the active session model. */
+	activeModelSelector?: string;
 	/** Working directory for plugins tab */
 	cwd: string;
 	/** Active model (api + id); resolves what the snapcompact `auto` shape maps to. */
@@ -1043,6 +1048,11 @@ export class SettingsSelectorComponent implements Component {
 			});
 		} else if (def.path === "theme.dark" || def.path === "theme.light") {
 			options = this.context.availableThemes.map(t => ({ value: t, label: t }));
+		} else if (
+			def.path === "zzworkflow.execution.workUnits.model" ||
+			def.path === "zzworkflow.execution.adversarialReview.model"
+		) {
+			options = buildZZWorkflowModelChoices(this.context.availableModels, this.context.activeModelSelector);
 		}
 
 		// Preview handlers

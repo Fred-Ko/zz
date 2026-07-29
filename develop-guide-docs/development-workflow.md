@@ -121,7 +121,9 @@ TUI:
 - `console.*`를 사용하지 않는다.
 - raw text를 그대로 렌더링하지 않는다.
 - live streaming과 transcript rebuild 두 경로를 모두 확인한다.
-- 상세 상태줄은 모델, workspace, context/usage 행이 좁은 터미널에서도 의미를 유지해야 한다.
+- 상세 상태줄은 상태·작업·모델·작업공간·Git·컨텍스트·토큰·비용/한도·세션을 각각 독립된 라벨 행으로
+  표시한다. ZZW가 활성화되면 현재 Plan step, live Execution Wave와 activity 행을 추가하며, 좁은
+  터미널에서는 행을 합치지 말고 각 행의 값만 ANSI-aware 방식으로 축약한다.
 
 ## 5. 생성 파일
 
@@ -210,6 +212,7 @@ zz --smoke-test
 | tool 등록/삭제        | registry/gallery 테스트 + generated tool views 재생성 |
 | worker/빌드           | package build + `zz --smoke-test`                     |
 | ZZWorkflow lifecycle  | lifecycle/store 테스트 + recovery 사례                |
+| ZZW 병렬 실행         | Wave/Lane journal + resource conflict + abort/isolation/restart 사례 |
 | ZZWorkflow SQLite     | transaction/idempotency/local lease 테스트            |
 | Hindsight             | strict tag, redaction, outbox, authority 경계 테스트  |
 | Rust/native           | 관련 Rust 테스트 + native build                       |

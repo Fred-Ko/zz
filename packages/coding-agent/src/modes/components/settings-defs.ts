@@ -123,6 +123,20 @@ const CONDITIONS: Record<string, () => boolean> = {
 			return false;
 		}
 	},
+	zzwWorkUnitsEnabled: () => {
+		try {
+			return Settings.instance.get("zzworkflow.execution.workUnits.enabled");
+		} catch {
+			return false;
+		}
+	},
+	zzwAdversarialReviewEnabled: () => {
+		try {
+			return Settings.instance.get("zzworkflow.execution.adversarialReview.enabled");
+		} catch {
+			return false;
+		}
+	},
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

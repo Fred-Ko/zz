@@ -3,6 +3,26 @@ import type { ToolTier } from "@oh-my-pi/pi-agent-core";
 import { escapeXmlText, isEnoent, isRecord, prompt, Snowflake } from "@oh-my-pi/pi-utils";
 import taskLifecycleContextPrompt from "../prompts/goals/task-lifecycle-context.md" with { type: "text" };
 import * as git from "../utils/git";
+import {
+	effectiveStepExecution,
+	selectExecutionWave,
+	type ZZWExecutionWaveSelection,
+} from "../workflow/execution/scheduler";
+import {
+	cloneZZWExecutionState,
+	cloneZZWPlanImpact,
+	cloneZZWStepExecutionContract,
+	EMPTY_ZZW_EXECUTION_STATE,
+	selectZZWExecutionOutcomeLanes,
+	type ZZWDelegationAssessment,
+	type ZZWExecutionLane,
+	type ZZWExecutionSettings,
+	type ZZWExecutionState,
+	type ZZWExecutionWave,
+	type ZZWPlanImpact,
+	type ZZWStepExecutionContract,
+	type ZZWWorkUnitContract,
+} from "../workflow/execution/types";
 import { resolveRepositoryIdentity } from "../workflow/identity";
 import type { Goal } from "./state";
 
@@ -173,6 +193,7 @@ export interface TaskPlanStep {
 	assumptionIds?: string[];
 	consumesArtifacts?: string[];
 	producesArtifacts?: string[];
+	execution?: ZZWStepExecutionContract;
 }
 
 export interface TaskPlanChange {
@@ -228,6 +249,7 @@ export interface TaskPlanStepProposal {
 	assumptionIds?: string[];
 	consumesArtifacts?: string[];
 	producesArtifacts?: string[];
+	execution?: ZZWStepExecutionContract;
 }
 
 export interface TaskPlanPatch {
@@ -246,12 +268,20 @@ export interface TaskPlanPatch {
 
 export interface TaskReconciliation {
 	stepId: string;
+	laneId?: string;
 	operationId?: string;
+	observationId?: string;
 	evidenceIds: string[];
+	planImpact?: ZZWPlanImpact;
 	classification?: TaskStepResultClassification;
 	failureFingerprint?: string;
 	repeatedFailures: number;
-	requiredAction: "classify-result" | "retry-with-changed-condition" | "patch-plan" | "request-user";
+	requiredAction:
+		| "classify-result"
+		| "satisfy-approved-precondition"
+		| "retry-with-changed-condition"
+		| "patch-plan"
+		| "request-user";
 	createdAt: number;
 }
 
@@ -305,13 +335,23 @@ export interface TaskObservation {
 	createdAt: number;
 }
 
-export type TaskOperationStatus = "prepared" | "running" | "committed" | "failed" | "compensated";
+export type TaskOperationStatus =
+	| "prepared"
+	| "running"
+	| "committed"
+	| "failed"
+	| "cancelled"
+	| "interrupted"
+	| "unknown"
+	| "compensated";
 
 export interface TaskOperation {
 	id: string;
 	taskId: string;
 	attemptId: string;
 	episodeId: string;
+	waveId?: string;
+	laneId?: string;
 	toolCallId: string;
 	toolName: string;
 	tier: Exclude<ToolTier, "read">;
@@ -378,6 +418,7 @@ export interface TaskLifecycleState {
 	episode: TaskEpisode;
 	evidence: TaskEvidence[];
 	observations?: TaskObservation[];
+	execution: ZZWExecutionState;
 	pendingOperationIds: string[];
 	stalePlan: boolean;
 	reconciliation?: TaskReconciliation;
@@ -399,12 +440,67 @@ export interface TaskLifecycleSummary {
 	pendingOperationIds: string[];
 	stalePlan: boolean;
 	activePlanStepId?: string;
+	activePlanStepIds: string[];
+	readyPlanStepIds: string[];
+	activeWaveId?: string;
+	delegatedStepIds: string[];
+	retainedPrimaryStepIds: string[];
+	unassessedDelegationStepIds: string[];
+	declaredWorkUnitCount: number;
 	readinessReady: boolean;
 	readinessBlockers: TaskReadinessBlockerCode[];
 	verificationFresh: boolean;
 	writesAllowed: boolean;
 	requiredNextAction: string;
 	workspaceHead: string | null;
+}
+
+export interface TaskExecutionWaveRequest {
+	stepIds?: string[];
+	mode: "serial" | "validation" | "safe-parallel";
+	validationConcurrency: number;
+	subagentConcurrency: number;
+	rollingEpoch?: boolean;
+	workUnitsEnabled?: boolean;
+	workUnitModel?: string;
+	adversarialReviewEnabled?: boolean;
+	adversarialReviewerModel?: string;
+	maxRepairAttempts?: number;
+}
+
+export interface TaskPreparedExecutionWave {
+	wave: ZZWExecutionWave;
+	lanes: ZZWExecutionLane[];
+	deferred: ZZWExecutionWaveSelection["deferred"];
+}
+
+export interface TaskExecutionLaneResult {
+	laneId: string;
+	validator?: string;
+	exitCode?: number;
+	outputDigest?: string;
+	artifactIds?: string[];
+	patchPath?: string;
+	branchName?: string;
+	planImpact?: ZZWPlanImpact;
+	error?: string;
+	cancelled?: boolean;
+	interrupted?: boolean;
+}
+
+export interface TaskExecutionLaneIntegrationResult {
+	laneId: string;
+	succeeded: boolean;
+	outputDigest?: string;
+	error?: string;
+}
+
+export interface TaskExecutionReviewResult {
+	reviewerLaneId: string;
+	verdict: "pass" | "reject" | "escalate";
+	findings: string[];
+	residualRisks: string[];
+	planImpact: ZZWPlanImpact;
 }
 
 export interface TaskLifecycleHandoff {
@@ -424,6 +520,10 @@ export type TaskPlanValidationIssueCode =
 	| "SELF_DEPENDENCY"
 	| "DEPENDENCY_CYCLE"
 	| "MILESTONE_EXECUTION_FIELDS"
+	| "DELEGATION_ASSESSMENT_MISSING"
+	| "DELEGATION_ASSESSMENT_INVALID"
+	| "EXECUTION_CONTRACT_INVALID"
+	| "RESOURCE_CLAIM_INVALID"
 	| "VALIDATOR_MISSING"
 	| "UNKNOWN_SUCCESS_CONDITION_ID"
 	| "UNKNOWN_VERIFICATION_ID"
@@ -507,6 +607,7 @@ export interface TaskLifecycleHost {
 			| "revised"
 			| "episode-started"
 			| "plan-updated"
+			| "execution-updated"
 			| "paused"
 			| "handoff"
 			| "completed"
@@ -515,7 +616,7 @@ export interface TaskLifecycleHost {
 	syncZZWorkflowOperation?(
 		state: TaskLifecycleState,
 		operation: TaskOperation,
-		reason: "operation-prepared" | "operation-settled" | "operation-reconciled",
+		reason: "operation-prepared" | "operation-running" | "operation-settled" | "operation-reconciled",
 	): Promise<void>;
 	assertMutationLease?(state: TaskLifecycleState): Promise<void>;
 	recallTaskKnowledge?(
@@ -525,8 +626,21 @@ export interface TaskLifecycleHost {
 	requestTaskKnowledgeReview?(state: TaskLifecycleState): Promise<void> | void;
 	publishPlanProjection?(state: TaskLifecycleState): Promise<void> | void;
 	planPatchApprovalMode?(): "always" | "material";
+	executionMode?(): "serial" | "validation" | "safe-parallel";
+	executionSettings?(): ZZWExecutionSettings;
 	now?(): number;
-	mintId?(kind: "attempt" | "episode" | "checkpoint" | "evidence" | "operation" | "statement" | "observation"): string;
+	mintId?(
+		kind:
+			| "attempt"
+			| "episode"
+			| "checkpoint"
+			| "evidence"
+			| "operation"
+			| "statement"
+			| "observation"
+			| "wave"
+			| "lane",
+	): string;
 }
 
 interface LifecycleSnapshotEnvelope {
@@ -542,6 +656,43 @@ interface OperationEnvelope {
 }
 
 const TERMINAL_PHASES = new Set<TaskLifecyclePhase>(["COMPLETED", "ABANDONED", "FAILED"]);
+const TERMINAL_LANE_STATUSES = new Set<ZZWExecutionLane["status"]>([
+	"succeeded",
+	"failed",
+	"cancelled",
+	"interrupted",
+	"unknown",
+	"integrated",
+	"rejected",
+	"superseded",
+	"awaiting-reconciliation",
+]);
+
+const PLAN_IMPACT_RANK: Record<ZZWPlanImpact["level"], number> = {
+	none: 0,
+	execution: 1,
+	structural: 2,
+	contract: 3,
+};
+
+function strongerPlanImpact(
+	current: ZZWPlanImpact | undefined,
+	next: ZZWPlanImpact | undefined,
+): ZZWPlanImpact | undefined {
+	if (!current) return cloneZZWPlanImpact(next);
+	if (!next) return cloneZZWPlanImpact(current);
+	return cloneZZWPlanImpact(PLAN_IMPACT_RANK[next.level] >= PLAN_IMPACT_RANK[current.level] ? next : current);
+}
+
+function planImpactClassification(impact: ZZWPlanImpact): TaskStepResultClassification {
+	if (impact.kind === "implementation-feedback") return "implementation-feedback";
+	if (impact.kind === "missing-precondition") return "missing-precondition";
+	if (impact.kind === "execution-failure") return "execution-failure";
+	if (impact.kind === "contradicted-assumption") return "contradicted-assumption";
+	if (impact.kind === "unexpected-effect" || impact.level === "contract") return "unexpected-effect";
+	return "contradicted-precondition";
+}
+
 const LIFECYCLE_PHASES = new Set<string>([
 	"INTAKE",
 	"DISCOVERY",
@@ -562,7 +713,16 @@ const LIFECYCLE_PHASES = new Set<string>([
 	"ABANDONED",
 	"FAILED",
 ]);
-const OPERATION_STATUSES = new Set<string>(["prepared", "running", "committed", "failed", "compensated"]);
+const OPERATION_STATUSES = new Set<string>([
+	"prepared",
+	"running",
+	"committed",
+	"failed",
+	"cancelled",
+	"interrupted",
+	"unknown",
+	"compensated",
+]);
 const PLAN_STEP_STATUSES = new Set<string>([
 	"pending",
 	"in_progress",
@@ -572,6 +732,48 @@ const PLAN_STEP_STATUSES = new Set<string>([
 	"superseded",
 	"abandoned",
 ]);
+const ZZW_STEP_EXECUTORS = new Set<string>(["primary", "validator", "subagent-readonly", "subagent-isolated"]);
+const ZZW_RESOURCE_KINDS = new Set<string>([
+	"workspace-path",
+	"git-metadata",
+	"lockfile",
+	"cache",
+	"port",
+	"service",
+	"database",
+	"external-api",
+	"cpu",
+	"memory",
+]);
+const ZZW_RESOURCE_ACCESS = new Set<string>(["read", "write", "exclusive"]);
+const ZZW_ISOLATION_MODES = new Set<string>(["none", "snapshot", "required"]);
+const ZZW_INTEGRATION_MODES = new Set<string>(["none", "patch"]);
+const ZZW_FAILURE_DOMAINS = new Set<string>(["step", "wave", "shared-resource"]);
+const ZZW_CAPABILITY_CLASSES = new Set<string>(["mechanical", "local-reasoning", "system-reasoning"]);
+const ZZW_DELEGATION_DECISIONS = new Set<string>(["retain-primary", "delegate-readonly", "delegate-isolated"]);
+const ZZW_DELEGATION_REASON_CODES = new Set<string>([
+	"cross-cutting-reasoning",
+	"shared-write-surface",
+	"unbounded-scope",
+	"exclusive-resource",
+	"high-risk-side-effect",
+	"atomic-sequence",
+	"bounded-readonly",
+	"bounded-isolated-write",
+]);
+const RETAIN_PRIMARY_REASON_CODES = new Set<string>([
+	"cross-cutting-reasoning",
+	"shared-write-surface",
+	"unbounded-scope",
+	"exclusive-resource",
+	"high-risk-side-effect",
+	"atomic-sequence",
+]);
+const DELEGATION_EXECUTOR_BY_DECISION = {
+	"retain-primary": "primary",
+	"delegate-readonly": "subagent-readonly",
+	"delegate-isolated": "subagent-isolated",
+} as const;
 const DEPENDENCY_LOCK_FILES = [
 	"bun.lock",
 	"bun.lockb",
@@ -650,6 +852,7 @@ function planStepContractHash(step: TaskPlanStep): string {
 			assumptionIds: step.assumptionIds ?? [],
 			consumesArtifacts: step.consumesArtifacts ?? [],
 			producesArtifacts: step.producesArtifacts ?? [],
+			execution: step.execution,
 		}),
 	);
 }
@@ -687,6 +890,7 @@ function normalizePlanStepReferences(step: TaskPlanStep, specification: TaskSpec
 		assumptionIds: [...(step.assumptionIds ?? [])],
 		consumesArtifacts: [...(step.consumesArtifacts ?? [])],
 		producesArtifacts: [...(step.producesArtifacts ?? [])],
+		execution: step.execution ? cloneZZWStepExecutionContract(step.execution) : undefined,
 	};
 	return { ...normalized, contractHash: planStepContractHash(normalized) };
 }
@@ -738,9 +942,14 @@ function cloneState(state: TaskLifecycleState): TaskLifecycleState {
 			evidenceIds: [...observation.evidenceIds],
 			affects: observation.affects.map(affected => ({ ...affected })),
 		})),
+		execution: cloneZZWExecutionState(state.execution),
 		pendingOperationIds: [...state.pendingOperationIds],
 		reconciliation: state.reconciliation
-			? { ...state.reconciliation, evidenceIds: [...state.reconciliation.evidenceIds] }
+			? {
+					...state.reconciliation,
+					evidenceIds: [...state.reconciliation.evidenceIds],
+					planImpact: cloneZZWPlanImpact(state.reconciliation.planImpact),
+				}
 			: undefined,
 		handoff: state.handoff
 			? {
@@ -770,8 +979,45 @@ function cloneState(state: TaskLifecycleState): TaskLifecycleState {
 	};
 }
 
-export function summarizeTaskLifecycle(state: TaskLifecycleState | undefined): TaskLifecycleSummary | null {
+function summarizeDelegation(plan: TaskPlan): {
+	delegatedStepIds: string[];
+	retainedPrimaryStepIds: string[];
+	unassessedDelegationStepIds: string[];
+	declaredWorkUnitCount: number;
+} {
+	const currentWorkSteps = plan.steps.filter(
+		step =>
+			(step.kind ?? planStepKind(step.phase, step.content)) === "work" &&
+			step.status !== "superseded" &&
+			step.status !== "invalidated" &&
+			step.status !== "abandoned",
+	);
+	return {
+		delegatedStepIds: currentWorkSteps
+			.filter(step => step.execution?.delegationAssessment?.decision.startsWith("delegate-") === true)
+			.map(step => step.id),
+		retainedPrimaryStepIds: currentWorkSteps
+			.filter(step => step.execution?.delegationAssessment?.decision === "retain-primary")
+			.map(step => step.id),
+		unassessedDelegationStepIds: currentWorkSteps
+			.filter(step => step.status !== "completed" && step.execution?.delegationAssessment === undefined)
+			.map(step => step.id),
+		declaredWorkUnitCount: currentWorkSteps.reduce(
+			(total, step) => total + (step.execution?.workUnits?.length ?? 0),
+			0,
+		),
+	};
+}
+
+export function summarizeTaskLifecycle(
+	state: TaskLifecycleState | undefined,
+	executionMode: "serial" | "validation" | "safe-parallel" = "validation",
+	requireDelegationAssessment = false,
+): TaskLifecycleSummary | null {
 	if (!state) return null;
+	const activeSteps = activePlanSteps(state.plan);
+	const readySteps = readyPlanSteps(state.plan);
+	const delegation = summarizeDelegation(state.plan);
 	return {
 		taskId: state.taskId,
 		attemptId: state.attemptId,
@@ -784,12 +1030,16 @@ export function summarizeTaskLifecycle(state: TaskLifecycleState | undefined): T
 		phase: state.phase,
 		pendingOperationIds: [...state.pendingOperationIds],
 		stalePlan: state.stalePlan,
-		activePlanStepId: activePlanStep(state.plan)?.id,
+		activePlanStepId: activeSteps[0]?.id ?? readySteps[0]?.id,
+		activePlanStepIds: activeSteps.map(step => step.id),
+		readyPlanStepIds: readySteps.map(step => step.id),
+		activeWaveId: state.execution.activeWaveId,
+		...delegation,
 		readinessReady: state.readiness.ready,
 		readinessBlockers: state.readiness.blockers.map(blocker => blocker.code),
 		verificationFresh: missingValidators(state).length === 0,
-		writesAllowed: writesAllowed(state),
-		requiredNextAction: nextRequiredAction(state),
+		writesAllowed: writesAllowed(state, requireDelegationAssessment),
+		requiredNextAction: nextRequiredAction(state, executionMode, requireDelegationAssessment),
 		workspaceHead: state.workspace.headCommit,
 	};
 }
@@ -1016,8 +1266,24 @@ function missingValidators(state: TaskLifecycleState): string[] {
 		.map(requirement => `${requirement.id}: ${requirement.description}`);
 }
 
-function nextRequiredAction(state: TaskLifecycleState): string {
+function isApprovedPreconditionRecovery(state: TaskLifecycleState): boolean {
+	return (
+		state.reconciliation?.requiredAction === "satisfy-approved-precondition" &&
+		state.reconciliation.classification === "missing-precondition" &&
+		!state.stalePlan &&
+		state.plan.status === "current" &&
+		state.plan.approval === "approved"
+	);
+}
+
+function nextRequiredAction(
+	state: TaskLifecycleState,
+	executionMode: "serial" | "validation" | "safe-parallel" = "validation",
+	requireDelegationAssessment = false,
+): string {
 	if (state.pendingOperationIds.length > 0) return "reconcile_pending_operation";
+	if (state.execution.activeWaveId) return "wait_execution_wave";
+	if (isApprovedPreconditionRecovery(state)) return "satisfy_approved_precondition";
 	if (state.reconciliation || state.phase === "RECONCILING") return "classify_observation_and_reconcile_plan";
 	if (state.stalePlan || state.phase === "RECOVERING" || state.phase === "REPLANNING") {
 		return "reconcile_workspace_and_update_plan";
@@ -1028,21 +1294,48 @@ function nextRequiredAction(state: TaskLifecycleState): string {
 			: "propose_executable_plan";
 	}
 	if (!state.readiness.ready) return "resolve_readiness_blockers";
+	if (
+		requireDelegationAssessment &&
+		activePlanSteps(state.plan).length === 0 &&
+		summarizeDelegation(state.plan).unassessedDelegationStepIds.length > 0
+	) {
+		return "assess_delegation_and_patch_plan";
+	}
+	const readySteps = readyPlanSteps(state.plan);
 	const active = activePlanStep(state.plan);
+	if (active && effectiveStepExecution(active).executor === "primary") return "execute_active_step";
+	if (readySteps.some(step => effectiveStepExecution(step).executor === "primary")) {
+		return "execute_active_step";
+	}
+	if (
+		readySteps.some(step => {
+			const executor = effectiveStepExecution(step).executor;
+			return executor === "validator" || (executionMode !== "validation" && executor !== "primary");
+		})
+	) {
+		return "run_execution_wave";
+	}
+	if (readySteps.some(step => effectiveStepExecution(step).executor !== "primary")) {
+		return "enable_safe_parallel_or_patch_executor";
+	}
 	if (!active && readyMilestone(state.plan)) return "expand_ready_milestone";
 	if (active?.kind === "validation") return "run_required_validation";
 	if (!active && missingValidators(state).length === 0) return "propose_completion";
 	return "execute_active_step";
 }
 
-function writesAllowed(state: TaskLifecycleState): boolean {
+function writesAllowed(state: TaskLifecycleState, requireDelegationAssessment = false): boolean {
+	const approvedPreconditionRecovery = isApprovedPreconditionRecovery(state);
 	return (
 		state.readiness.ready &&
 		state.plan.approval === "approved" &&
 		!state.stalePlan &&
-		!state.reconciliation &&
+		(!state.reconciliation || approvedPreconditionRecovery) &&
 		state.pendingOperationIds.length === 0 &&
-		(state.phase === "READY" || state.phase === "EXECUTING")
+		(state.phase === "READY" || state.phase === "EXECUTING" || approvedPreconditionRecovery) &&
+		(!requireDelegationAssessment ||
+			activePlanSteps(state.plan).length > 0 ||
+			summarizeDelegation(state.plan).unassessedDelegationStepIds.length === 0)
 	);
 }
 
@@ -1070,13 +1363,18 @@ function stepDependenciesSatisfied(plan: TaskPlan, step: TaskPlanStep): boolean 
 }
 
 function activePlanStep(plan: TaskPlan): TaskPlanStep | undefined {
-	return (
-		plan.steps.find(
-			step => step.kind !== "milestone" && step.status === "in_progress" && stepDependenciesSatisfied(plan, step),
-		) ??
-		plan.steps.find(
-			step => step.kind !== "milestone" && step.status === "pending" && stepDependenciesSatisfied(plan, step),
-		)
+	return activePlanSteps(plan)[0] ?? readyPlanSteps(plan)[0];
+}
+
+function activePlanSteps(plan: TaskPlan): TaskPlanStep[] {
+	return plan.steps.filter(
+		step => step.kind !== "milestone" && step.status === "in_progress" && stepDependenciesSatisfied(plan, step),
+	);
+}
+
+function readyPlanSteps(plan: TaskPlan): TaskPlanStep[] {
+	return plan.steps.filter(
+		step => step.kind !== "milestone" && step.status === "pending" && stepDependenciesSatisfied(plan, step),
 	);
 }
 
@@ -1233,6 +1531,74 @@ function readinessFor(
 	return readiness;
 }
 
+function isZZWResourceClaim(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.kind === "string" &&
+		ZZW_RESOURCE_KINDS.has(value.kind) &&
+		typeof value.key === "string" &&
+		typeof value.access === "string" &&
+		ZZW_RESOURCE_ACCESS.has(value.access)
+	);
+}
+
+function isZZWWorkUnitContract(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.id === "string" &&
+		typeof value.content === "string" &&
+		Array.isArray(value.expectedEffects) &&
+		value.expectedEffects.every(item => typeof item === "string") &&
+		Array.isArray(value.allowedTools) &&
+		value.allowedTools.every(item => typeof item === "string") &&
+		Array.isArray(value.allowedTargets) &&
+		value.allowedTargets.every(item => typeof item === "string") &&
+		Array.isArray(value.postconditions) &&
+		value.postconditions.every(item => typeof item === "string") &&
+		Array.isArray(value.resourceClaims) &&
+		value.resourceClaims.every(isZZWResourceClaim) &&
+		Array.isArray(value.validators) &&
+		value.validators.every(item => typeof item === "string") &&
+		typeof value.capability === "string" &&
+		ZZW_CAPABILITY_CLASSES.has(value.capability) &&
+		(value.maxRuntimeMs === undefined || typeof value.maxRuntimeMs === "number")
+	);
+}
+
+function isZZWDelegationAssessment(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.decision === "string" &&
+		ZZW_DELEGATION_DECISIONS.has(value.decision) &&
+		typeof value.reasonCode === "string" &&
+		ZZW_DELEGATION_REASON_CODES.has(value.reasonCode) &&
+		typeof value.rationale === "string"
+	);
+}
+
+function isZZWStepExecutionContract(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		typeof value.executor === "string" &&
+		ZZW_STEP_EXECUTORS.has(value.executor) &&
+		(value.delegationAssessment === undefined || isZZWDelegationAssessment(value.delegationAssessment)) &&
+		Array.isArray(value.resourceClaims) &&
+		value.resourceClaims.every(isZZWResourceClaim) &&
+		typeof value.isolation === "string" &&
+		ZZW_ISOLATION_MODES.has(value.isolation) &&
+		typeof value.integration === "string" &&
+		ZZW_INTEGRATION_MODES.has(value.integration) &&
+		typeof value.failureDomain === "string" &&
+		ZZW_FAILURE_DOMAINS.has(value.failureDomain) &&
+		(value.maxRuntimeMs === undefined || typeof value.maxRuntimeMs === "number") &&
+		(value.agent === undefined || typeof value.agent === "string") &&
+		(value.capability === undefined ||
+			(typeof value.capability === "string" && ZZW_CAPABILITY_CLASSES.has(value.capability))) &&
+		(value.workUnits === undefined ||
+			(Array.isArray(value.workUnits) && value.workUnits.every(isZZWWorkUnitContract)))
+	);
+}
+
 function isTaskPlan(value: unknown): value is TaskPlan {
 	return (
 		isRecord(value) &&
@@ -1252,7 +1618,8 @@ function isTaskPlan(value: unknown): value is TaskPlan {
 					(Array.isArray(step.successConditionIds) &&
 						step.successConditionIds.every(item => typeof item === "string"))) &&
 				(step.verificationIds === undefined ||
-					(Array.isArray(step.verificationIds) && step.verificationIds.every(item => typeof item === "string"))),
+					(Array.isArray(step.verificationIds) && step.verificationIds.every(item => typeof item === "string"))) &&
+				(step.execution === undefined || isZZWStepExecutionContract(step.execution)),
 		)
 	);
 }
@@ -1292,6 +1659,7 @@ function migrateLifecycleState(value: unknown): unknown {
 		schemaVersion: TASK_LIFECYCLE_SCHEMA_VERSION,
 		plan: migrateLegacyTaskPlan(value.plan),
 		handoff,
+		execution: cloneZZWExecutionState(EMPTY_ZZW_EXECUTION_STATE),
 	};
 }
 
@@ -1300,6 +1668,35 @@ function isRequirementDefinitions(value: unknown): boolean {
 		value === undefined ||
 		(Array.isArray(value) &&
 			value.every(item => isRecord(item) && typeof item.id === "string" && typeof item.description === "string"))
+	);
+}
+
+function isZZWExecutionState(value: unknown): boolean {
+	return (
+		isRecord(value) &&
+		(value.activeWaveId === undefined || typeof value.activeWaveId === "string") &&
+		Array.isArray(value.waves) &&
+		value.waves.every(
+			wave =>
+				isRecord(wave) &&
+				typeof wave.id === "string" &&
+				typeof wave.status === "string" &&
+				Array.isArray(wave.laneIds),
+		) &&
+		Array.isArray(value.lanes) &&
+		value.lanes.every(
+			lane =>
+				isRecord(lane) &&
+				typeof lane.id === "string" &&
+				typeof lane.waveId === "string" &&
+				typeof lane.stepId === "string" &&
+				typeof lane.status === "string" &&
+				Array.isArray(lane.resourceClaims) &&
+				lane.resourceClaims.every(isZZWResourceClaim) &&
+				Array.isArray(lane.operationIds) &&
+				Array.isArray(lane.artifactIds) &&
+				Array.isArray(lane.evidenceIds),
+		)
 	);
 }
 
@@ -1336,6 +1733,7 @@ function isLifecycleState(value: unknown): value is TaskLifecycleState {
 		isRecord(value.episode) &&
 		isRecord(value.episode.startWorkspace) &&
 		Array.isArray(value.evidence) &&
+		isZZWExecutionState(value.execution) &&
 		Array.isArray(value.pendingOperationIds) &&
 		(value.handoff === undefined ||
 			(isRecord(value.handoff) &&
@@ -1427,6 +1825,8 @@ function isTaskOperation(value: unknown): value is TaskOperation {
 		isRecord(value) &&
 		typeof value.id === "string" &&
 		typeof value.taskId === "string" &&
+		(value.waveId === undefined || typeof value.waveId === "string") &&
+		(value.laneId === undefined || typeof value.laneId === "string") &&
 		typeof value.toolCallId === "string" &&
 		typeof value.toolName === "string" &&
 		typeof value.status === "string" &&
@@ -1513,7 +1913,93 @@ function normalizePlanStep(
 	);
 }
 
-function validatePlanSteps(steps: readonly TaskPlanStep[], specification: TaskSpecification): void {
+function preservedExecutorAssessment(
+	step: TaskPlanStep,
+	execution: ZZWStepExecutionContract,
+): ZZWDelegationAssessment | undefined {
+	if (execution.executor === "subagent-readonly") {
+		return {
+			decision: "delegate-readonly",
+			reasonCode: "bounded-readonly",
+			rationale: "Work Unit 정책 도입 전에 저장된 read-only executor를 승인 시 그대로 보존한 호환성 판단입니다.",
+		};
+	}
+	if (execution.executor === "subagent-isolated") {
+		return {
+			decision: "delegate-isolated",
+			reasonCode: "bounded-isolated-write",
+			rationale: "Work Unit 정책 도입 전에 저장된 isolated executor를 승인 시 그대로 보존한 호환성 판단입니다.",
+		};
+	}
+	if (execution.executor !== "primary") return undefined;
+	if (step.riskClass === "high") {
+		return {
+			decision: "retain-primary",
+			reasonCode: "high-risk-side-effect",
+			rationale: "기존 high-risk 단계의 Primary 실행 계약을 승인 시 보존했습니다.",
+		};
+	}
+	if (execution.resourceClaims.some(claim => claim.access === "exclusive")) {
+		return {
+			decision: "retain-primary",
+			reasonCode: "exclusive-resource",
+			rationale: "기존 단계가 exclusive resource를 소유하므로 승인 시 Primary 실행 계약을 보존했습니다.",
+		};
+	}
+	if ((step.allowedTargets?.length ?? 0) === 0 || step.allowedTargets?.includes(".")) {
+		return {
+			decision: "retain-primary",
+			reasonCode: "unbounded-scope",
+			rationale: "기존 단계의 대상 범위가 위임에 충분히 한정되지 않아 승인 시 Primary 실행 계약을 보존했습니다.",
+		};
+	}
+	return {
+		decision: "retain-primary",
+		reasonCode: "shared-write-surface",
+		rationale: "기존 단계의 실행 계약을 변경하지 않도록 승인 시 Primary 실행을 보존했습니다.",
+	};
+}
+
+function normalizeLegacyDelegationAssessmentsForApproval(
+	steps: readonly TaskPlanStep[],
+	specification: TaskSpecification,
+	required: boolean,
+): TaskPlanStep[] {
+	if (!required) return [...steps];
+	return steps.map(step => {
+		const kind = step.kind ?? planStepKind(step.phase, step.content);
+		if (
+			kind !== "work" ||
+			step.status === "completed" ||
+			step.status === "superseded" ||
+			step.status === "invalidated" ||
+			step.status === "abandoned" ||
+			step.execution?.delegationAssessment
+		) {
+			return step;
+		}
+		const execution = effectiveStepExecution(step);
+		const delegationAssessment = preservedExecutorAssessment(step, execution);
+		if (!delegationAssessment) return step;
+		return normalizePlanStepReferences(
+			{
+				...step,
+				execution: { ...execution, delegationAssessment },
+			},
+			specification,
+		);
+	});
+}
+
+interface TaskPlanValidationOptions {
+	requireDelegationAssessment?: boolean;
+}
+
+function validatePlanSteps(
+	steps: readonly TaskPlanStep[],
+	specification: TaskSpecification,
+	options: TaskPlanValidationOptions = {},
+): void {
 	const issues: TaskPlanValidationIssue[] = [];
 	const addIssue = (issue: TaskPlanValidationIssue): void => {
 		if (
@@ -1612,7 +2098,8 @@ function validatePlanSteps(steps: readonly TaskPlanStep[], specification: TaskSp
 		}
 		if (
 			step.kind === "milestone" &&
-			((step.validators?.length ?? 0) > 0 ||
+			(step.execution !== undefined ||
+				(step.validators?.length ?? 0) > 0 ||
 				(step.successConditionIds?.length ?? 0) > 0 ||
 				(step.verificationIds?.length ?? 0) > 0)
 		) {
@@ -1621,6 +2108,276 @@ function validatePlanSteps(steps: readonly TaskPlanStep[], specification: TaskSp
 				message: `${step.id} milestone은 검증 매핑을 가질 수 없으며 후속 Plan 확장으로 대체해야 합니다. allowedTools와 allowedTargets는 확장 권한 상한으로만 사용됩니다.`,
 				stepId: step.id,
 			});
+		}
+		const stepKind = step.kind ?? planStepKind(step.phase, step.content);
+		const currentWorkStep =
+			stepKind === "work" &&
+			step.status !== "completed" &&
+			step.status !== "superseded" &&
+			step.status !== "invalidated" &&
+			step.status !== "abandoned";
+		const delegationAssessment = step.execution?.delegationAssessment;
+		if (currentWorkStep && options.requireDelegationAssessment && !delegationAssessment) {
+			addIssue({
+				code: "DELEGATION_ASSESSMENT_MISSING",
+				message: `${step.id} 단계는 Work Unit 활성 정책에 따라 위임 또는 Primary 유지 판단을 명시해야 합니다.`,
+				stepId: step.id,
+			});
+		}
+		if (delegationAssessment) {
+			const expectedExecutor = DELEGATION_EXECUTOR_BY_DECISION[delegationAssessment.decision];
+			const reasonMatchesDecision =
+				delegationAssessment.decision === "retain-primary"
+					? RETAIN_PRIMARY_REASON_CODES.has(delegationAssessment.reasonCode)
+					: delegationAssessment.decision === "delegate-readonly"
+						? delegationAssessment.reasonCode === "bounded-readonly"
+						: delegationAssessment.reasonCode === "bounded-isolated-write";
+			if (
+				step.execution?.executor !== expectedExecutor ||
+				!delegationAssessment.rationale.trim() ||
+				!reasonMatchesDecision
+			) {
+				addIssue({
+					code: "DELEGATION_ASSESSMENT_INVALID",
+					message: `${step.id} 단계의 위임 판단, executor, reasonCode와 근거가 서로 일치해야 합니다.`,
+					stepId: step.id,
+				});
+			}
+		}
+		if (step.execution) {
+			const workUnits = step.execution.workUnits ?? [];
+			const workUnitIds = new Set<string>();
+			if (
+				step.execution.maxRuntimeMs !== undefined &&
+				(!Number.isFinite(step.execution.maxRuntimeMs) || step.execution.maxRuntimeMs <= 0)
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 maxRuntimeMs는 0보다 큰 유한한 값이어야 합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (step.execution.capability && !ZZW_CAPABILITY_CLASSES.has(step.execution.capability)) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 capability class가 유효하지 않습니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				workUnits.length > 0 &&
+				step.execution.executor !== "subagent-readonly" &&
+				step.execution.executor !== "subagent-isolated"
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 Work Unit은 subagent executor에서만 사용할 수 있습니다.`,
+					stepId: step.id,
+				});
+			}
+			for (const workUnit of workUnits) {
+				if (!workUnit.id.trim() || workUnitIds.has(workUnit.id)) {
+					addIssue({
+						code: "EXECUTION_CONTRACT_INVALID",
+						message: `${step.id}의 Work Unit ID는 비어 있지 않고 단계 안에서 고유해야 합니다: ${workUnit.id}`,
+						stepId: step.id,
+					});
+				}
+				workUnitIds.add(workUnit.id);
+				if (!workUnit.content.trim() || !ZZW_CAPABILITY_CLASSES.has(workUnit.capability)) {
+					addIssue({
+						code: "EXECUTION_CONTRACT_INVALID",
+						message: `${step.id}/${workUnit.id}의 content와 capability가 유효해야 합니다.`,
+						stepId: step.id,
+					});
+				}
+				if (
+					workUnit.maxRuntimeMs !== undefined &&
+					(!Number.isFinite(workUnit.maxRuntimeMs) || workUnit.maxRuntimeMs <= 0)
+				) {
+					addIssue({
+						code: "EXECUTION_CONTRACT_INVALID",
+						message: `${step.id}/${workUnit.id}의 maxRuntimeMs는 0보다 큰 유한한 값이어야 합니다.`,
+						stepId: step.id,
+					});
+				}
+				if (workUnit.resourceClaims.length === 0 || workUnit.resourceClaims.some(claim => !claim.key.trim())) {
+					addIssue({
+						code: "RESOURCE_CLAIM_INVALID",
+						message: `${step.id}/${workUnit.id}에는 비어 있지 않은 resource claim이 필요합니다.`,
+						stepId: step.id,
+					});
+				}
+				const outsideTools = workUnit.allowedTools.filter(tool => !(step.allowedTools ?? []).includes(tool));
+				const outsideTargets = workUnit.allowedTargets.filter(
+					target =>
+						!(step.allowedTargets ?? []).some(
+							prefix =>
+								prefix === "." || target === prefix || target.startsWith(`${prefix.replace(/\/$/, "")}/`),
+						),
+				);
+				if (outsideTools.length > 0 || outsideTargets.length > 0) {
+					addIssue({
+						code: "EXECUTION_CONTRACT_INVALID",
+						message: `${step.id}/${workUnit.id}이 상위 Step의 tool/target 승인 범위를 벗어납니다.`,
+						stepId: step.id,
+					});
+				}
+				if (
+					step.execution.executor === "subagent-readonly" &&
+					(workUnit.resourceClaims.some(claim => claim.access !== "read") ||
+						workUnit.allowedTools.some(tool =>
+							["bash", "edit", "write", "ast_edit", "eval", "github", "computer"].includes(tool),
+						))
+				) {
+					addIssue({
+						code: "EXECUTION_CONTRACT_INVALID",
+						message: `${step.id}/${workUnit.id} read-only Work Unit은 read claim과 read-only tool만 사용할 수 있습니다.`,
+						stepId: step.id,
+					});
+				}
+				if (
+					step.execution.executor === "subagent-isolated" &&
+					(!workUnit.resourceClaims.some(
+						claim =>
+							claim.kind === "workspace-path" && (claim.access === "write" || claim.access === "exclusive"),
+					) ||
+						workUnit.allowedTargets.length === 0)
+				) {
+					addIssue({
+						code: "RESOURCE_CLAIM_INVALID",
+						message: `${step.id}/${workUnit.id} isolated Work Unit에는 target과 write/exclusive workspace claim이 필요합니다.`,
+						stepId: step.id,
+					});
+				}
+				if (
+					step.execution.executor === "subagent-isolated" &&
+					workUnit.capability === "mechanical" &&
+					workUnit.validators.length === 0
+				) {
+					addIssue({
+						code: "VALIDATOR_MISSING",
+						message: `${step.id}/${workUnit.id} mechanical write Work Unit에는 exact validator가 필요합니다.`,
+						stepId: step.id,
+					});
+				}
+			}
+			if (step.execution.resourceClaims.length === 0) {
+				addIssue({
+					code: "RESOURCE_CLAIM_INVALID",
+					message: `${step.id} 단계의 execution 계약에는 최소 한 개의 resource claim이 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (step.execution.resourceClaims.some(claim => !claim.key.trim())) {
+				addIssue({
+					code: "RESOURCE_CLAIM_INVALID",
+					message: `${step.id} 단계의 resource claim key가 비어 있습니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.resourceClaims.some(claim => {
+					if (claim.kind !== "workspace-path") return false;
+					const normalized = path.posix.normalize(claim.key.replaceAll("\\", "/"));
+					return normalized === ".." || normalized.startsWith("../") || normalized.startsWith("/");
+				})
+			) {
+				addIssue({
+					code: "RESOURCE_CLAIM_INVALID",
+					message: `${step.id} 단계의 workspace-path claim은 저장소 상대 경로여야 합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.agent !== undefined &&
+				(step.execution.executor === "primary" || step.execution.executor === "validator")
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 agent 선택은 subagent executor에서만 사용할 수 있습니다.`,
+					stepId: step.id,
+				});
+			}
+			if (step.execution.executor === "validator" && !isValidationStep(step)) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 validator executor는 validation 단계에만 사용할 수 있습니다.`,
+					stepId: step.id,
+				});
+			}
+			if (step.execution.executor === "validator" && step.execution.integration !== "none") {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 validator executor는 integration=none이 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.executor === "validator" &&
+				step.execution.isolation === "none" &&
+				step.execution.resourceClaims.some(claim => claim.access !== "read")
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 쓰기 가능 validator는 isolation=snapshot 또는 isolation=required가 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.executor === "subagent-isolated" &&
+				(step.execution.isolation !== "required" || step.execution.integration !== "patch")
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 isolated subagent는 isolation=required와 integration=patch가 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.executor === "primary" &&
+				(step.execution.isolation !== "none" || step.execution.integration !== "none")
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 primary executor는 isolation=none과 integration=none이 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (step.execution.executor === "subagent-isolated" && (step.allowedTargets?.length ?? 0) === 0) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 isolated subagent는 비어 있지 않은 allowedTargets가 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.executor === "subagent-isolated" &&
+				!step.execution.resourceClaims.some(
+					claim => claim.kind === "workspace-path" && (claim.access === "write" || claim.access === "exclusive"),
+				)
+			) {
+				addIssue({
+					code: "RESOURCE_CLAIM_INVALID",
+					message: `${step.id}의 isolated subagent는 write/exclusive workspace-path claim이 필요합니다.`,
+					stepId: step.id,
+				});
+			}
+			if (
+				step.execution.executor === "subagent-readonly" &&
+				(step.execution.isolation !== "none" ||
+					step.execution.integration !== "none" ||
+					step.execution.resourceClaims.some(claim => claim.access !== "read") ||
+					(step.allowedTools ?? []).some(tool =>
+						["bash", "edit", "write", "ast_edit", "eval", "github", "computer"].includes(tool),
+					))
+			) {
+				addIssue({
+					code: "EXECUTION_CONTRACT_INVALID",
+					message: `${step.id}의 read-only subagent는 read claim과 integration=none만 사용할 수 있습니다.`,
+					stepId: step.id,
+				});
+			}
 		}
 	}
 	const visiting = new Set<string>();
@@ -1762,6 +2519,45 @@ function riskRank(riskClass: TaskPlanStepProposal["riskClass"] | undefined): num
 	return 0;
 }
 
+function executionContractKey(contract: ZZWStepExecutionContract | undefined): string {
+	if (!contract) return "primary-default";
+	return JSON.stringify({
+		...contract,
+		resourceClaims: contract.resourceClaims
+			.map(claim => ({ ...claim }))
+			.sort((left, right) =>
+				`${left.kind}:${left.key}:${left.access}`.localeCompare(`${right.kind}:${right.key}:${right.access}`),
+			),
+	});
+}
+
+function proposedStepExecutor(step: TaskPlanStep | TaskPlanStepProposal): ZZWStepExecutionContract["executor"] {
+	return step.execution?.executor ?? (step.kind === "validation" ? "validator" : "primary");
+}
+
+function sameStringSet(left: readonly string[] | undefined, right: readonly string[] | undefined): boolean {
+	const leftSet = new Set(left ?? []);
+	const rightSet = new Set(right ?? []);
+	return leftSet.size === rightSet.size && setContainsAll(leftSet, [...rightSet]);
+}
+
+function patchLeavesMappedStep(
+	plan: TaskPlan,
+	patch: TaskPlanPatch,
+	removedStepId: string,
+	field: "successConditionIds" | "verificationIds",
+	value: string,
+): boolean {
+	const removedIds = new Set(patch.removeStepIds);
+	const updates = new Map(patch.updateSteps.map(update => [update.id, update]));
+	const retained = activeAuthorizationSteps(plan).some(step => {
+		if (step.id === removedStepId || removedIds.has(step.id)) return false;
+		const update = updates.get(step.id);
+		return (update?.[field] ?? step[field] ?? []).includes(value);
+	});
+	return retained || patch.addSteps.some(step => (step[field] ?? []).includes(value));
+}
+
 function patchApprovalImpact(plan: TaskPlan, patch: TaskPlanPatch): TaskPlanApprovalImpact {
 	const byId = new Map(plan.steps.map(step => [step.id, step]));
 	const authorizationSteps = activeAuthorizationSteps(plan);
@@ -1797,15 +2593,36 @@ function patchApprovalImpact(plan: TaskPlan, patch: TaskPlanPatch): TaskPlanAppr
 						target => !envelopeTargets.some(prefix => target === prefix || target.startsWith(`${prefix}/`)),
 					));
 			const addsRisk = riskRank(step.riskClass) > envelopeRisk;
-			return addsUnapprovedRootWork || addsToolAuthority || addsTargetAuthority || addsRisk;
+			const executor = proposedStepExecutor(step);
+			const addsExecutorAuthority =
+				executor !== "primary" && !boundarySteps.some(candidate => proposedStepExecutor(candidate) === executor);
+			const changesValidatorContract =
+				executor === "validator" &&
+				!boundarySteps.some(
+					candidate =>
+						proposedStepExecutor(candidate) === "validator" &&
+						sameStringSet(candidate.validators, step.validators),
+				);
+			return (
+				addsUnapprovedRootWork ||
+				addsToolAuthority ||
+				addsTargetAuthority ||
+				addsRisk ||
+				addsExecutorAuthority ||
+				changesValidatorContract
+			);
 		}) ||
 		patch.removeStepIds.some(id => {
 			const step = byId.get(id);
-			return (
-				step?.status === "completed" ||
-				(step?.successConditionIds?.length ?? 0) > 0 ||
-				(step?.verificationIds?.length ?? 0) > 0
+			if (!step) return false;
+			if (step.status === "completed") return true;
+			const dropsSuccessMapping = (step.successConditionIds ?? []).some(
+				id => !patchLeavesMappedStep(plan, patch, step.id, "successConditionIds", id),
 			);
+			const dropsVerificationMapping = (step.verificationIds ?? []).some(
+				id => !patchLeavesMappedStep(plan, patch, step.id, "verificationIds", id),
+			);
+			return dropsSuccessMapping || dropsVerificationMapping;
 		})
 	)
 		return "material";
@@ -1826,6 +2643,8 @@ function patchApprovalImpact(plan: TaskPlan, patch: TaskPlanPatch): TaskPlanAppr
 		const previousSuccess = new Set(previous.successConditionIds ?? []);
 		const previousVerification = new Set(previous.verificationIds ?? []);
 		if (
+			(update.execution !== undefined &&
+				executionContractKey(update.execution) !== executionContractKey(previous.execution)) ||
 			riskRank(update.riskClass ?? previous.riskClass) > riskRank(previous.riskClass) ||
 			!setContainsAll(previousTools, [...nextTools]) ||
 			(update.allowedTargets !== undefined &&
@@ -1855,6 +2674,24 @@ function planChangeClassification(
 	return "new-discovery";
 }
 
+function selectedWorkUnits(step: TaskPlanStep, input: TaskExecutionWaveRequest): ZZWWorkUnitContract[] {
+	if (!input.workUnitsEnabled) return [];
+	return (step.execution?.workUnits ?? []).map(workUnit => ({
+		...workUnit,
+		expectedEffects: [...workUnit.expectedEffects],
+		allowedTools: [...workUnit.allowedTools],
+		allowedTargets: [...workUnit.allowedTargets],
+		postconditions: [...workUnit.postconditions],
+		resourceClaims: workUnit.resourceClaims.map(claim => ({ ...claim })),
+		validators: [...workUnit.validators],
+	}));
+}
+
+interface ExecutionLaneSeed {
+	validator?: string;
+	workUnit?: ZZWWorkUnitContract;
+}
+
 export class TaskLifecycleRuntime {
 	readonly #host: TaskLifecycleHost;
 	#state: TaskLifecycleState | undefined;
@@ -1873,6 +2710,1125 @@ export class TaskLifecycleRuntime {
 
 	get operations(): TaskOperation[] {
 		return [...this.#operations.values()].map(cloneOperation);
+	}
+
+	get readyStepIds(): string[] {
+		return this.#state ? readyPlanSteps(this.#state.plan).map(step => step.id) : [];
+	}
+
+	#executionSettings(): ZZWExecutionSettings {
+		return (
+			this.#host.executionSettings?.() ?? {
+				mode: this.#host.executionMode?.() ?? "validation",
+				validationConcurrency: 4,
+				subagentConcurrency: 3,
+				isolationMode: "auto",
+				preserveFailedLanes: true,
+				rollingEpoch: true,
+				workUnits: { enabled: false, model: "*" },
+				adversarialReview: { enabled: true, model: "*", maxRepairAttempts: 1 },
+			}
+		);
+	}
+
+	#planValidationOptions(): TaskPlanValidationOptions {
+		return { requireDelegationAssessment: this.#executionSettings().workUnits.enabled };
+	}
+
+	#createPreparedExecutionLanes(
+		wave: ZZWExecutionWave,
+		selection: ZZWExecutionWaveSelection,
+		workspace: TaskWorkspaceSnapshot,
+		input: TaskExecutionWaveRequest,
+		now: number,
+	): { lanes: ZZWExecutionLane[]; operations: TaskOperation[] } {
+		if (!this.#state) throw new Error("no active controlled task");
+		const baseWorkspaceHash = workspaceStateHash(workspace);
+		const lanes: ZZWExecutionLane[] = [];
+		const operations: TaskOperation[] = [];
+		for (const selected of selection.selected) {
+			const step = this.#state.plan.steps.find(candidate => candidate.id === selected.step.id);
+			if (!step) continue;
+			const workUnits = selectedWorkUnits(step, input);
+			const seeds: ExecutionLaneSeed[] =
+				selected.execution.executor === "validator"
+					? (step.validators ?? []).map(validator => ({ validator }))
+					: workUnits.length > 0
+						? workUnits.map(workUnit => ({ workUnit }))
+						: [{}];
+			for (const [index, seed] of seeds.entries()) {
+				const capability = seed.workUnit?.capability ?? selected.execution.capability;
+				const resourceClaims = seed.workUnit?.resourceClaims ?? selected.execution.resourceClaims;
+				const reviewRequired =
+					selected.execution.executor === "subagent-isolated" && input.adversarialReviewEnabled === true;
+				const lane: ZZWExecutionLane = {
+					id: this.#mint("lane"),
+					waveId: wave.id,
+					stepId: step.id,
+					workUnitId: seed.workUnit?.id,
+					role: selected.execution.executor === "validator" ? "validator" : "implementer",
+					attempt: 0,
+					stepContractHash: step.contractHash ?? planStepContractHash(step),
+					executor: selected.execution.executor,
+					workspaceId: workspace.workspaceId,
+					baseWorkspaceHash,
+					status: "prepared",
+					resourceClaims: resourceClaims.map(claim => ({ ...claim })),
+					operationIds: [],
+					artifactIds: [],
+					evidenceIds: [],
+					validators: seed.validator ? [seed.validator] : undefined,
+					candidateValidators: seed.workUnit?.validators ? [...seed.workUnit.validators] : undefined,
+					maxRuntimeMs: seed.workUnit?.maxRuntimeMs ?? selected.execution.maxRuntimeMs,
+					capability,
+					modelSelector: input.workUnitModel?.trim() || "*",
+					reviewerModelSelector: input.adversarialReviewerModel?.trim() || "*",
+					repairModelSelector: input.workUnitModel?.trim() || "*",
+					reviewRequired,
+					repairAttempts: 0,
+					maxRepairAttempts:
+						selected.execution.executor === "subagent-isolated"
+							? Math.max(0, Math.min(3, Math.trunc(input.maxRepairAttempts ?? 1)))
+							: 0,
+					createdAt: now,
+				};
+				const toolCallId = `${wave.id}:${lane.id}:${index}`;
+				const validator = seed.validator;
+				const operation: TaskOperation = {
+					id: this.#mint("operation"),
+					taskId: this.#state.taskId,
+					attemptId: this.#state.attemptId,
+					episodeId: this.#state.episodeId,
+					waveId: wave.id,
+					laneId: lane.id,
+					toolCallId,
+					toolName: selected.execution.executor === "validator" ? "zzw-validator" : "zzw-subagent",
+					tier:
+						selected.execution.executor === "subagent-isolated" || selected.execution.executor === "primary"
+							? "write"
+							: "exec",
+					target: (seed.workUnit?.allowedTargets ?? step.allowedTargets)?.join(",").slice(0, 512),
+					preStateHash: baseWorkspaceHash,
+					intendedEffect: `Execute lane ${lane.id} for Plan step ${step.id}${lane.workUnitId ? ` Work Unit ${lane.workUnitId}` : ""}`,
+					idempotencyKey: `${this.#state.taskId}:${this.#state.attemptId}:${wave.id}:${lane.id}:${index}`,
+					checkpointId: this.#state.checkpointId,
+					planStepId: step.id,
+					status: "prepared",
+					preparedAt: now,
+					evidenceKind: validator ? "verification" : "operation",
+					validator,
+					verificationIds: validator ? [...(step.verificationIds ?? [])] : [],
+					fingerprint: operationFingerprint(
+						selected.execution.executor === "validator" ? "zzw-validator" : "zzw-subagent",
+						{ laneId: lane.id, stepId: step.id, workUnitId: lane.workUnitId, validator },
+						step.id,
+						baseWorkspaceHash,
+					),
+				};
+				lane.operationIds.push(operation.id);
+				operations.push(operation);
+				this.#operations.set(operation.id, operation);
+				this.#operationByToolCall.set(toolCallId, operation.id);
+				this.#persistOperation(operation);
+				wave.laneIds.push(lane.id);
+				lanes.push(lane);
+			}
+			step.status = "in_progress";
+		}
+		return { lanes, operations };
+	}
+
+	async prepareExecutionWave(input: TaskExecutionWaveRequest): Promise<TaskPreparedExecutionWave> {
+		if (!this.#state || TERMINAL_PHASES.has(this.#state.phase)) throw new Error("no active controlled task");
+		this.#refreshPendingOperations();
+		if (this.#state.execution.activeWaveId) {
+			throw new Error(`Execution Wave ${this.#state.execution.activeWaveId}가 아직 종료되지 않았습니다.`);
+		}
+		if (this.#state.pendingOperationIds.length > 0) {
+			throw new Error(`미해결 operation을 먼저 복구해야 합니다: ${this.#state.pendingOperationIds.join(", ")}`);
+		}
+		if (this.#state.plan.approval !== "approved" || !this.#state.readiness.ready) {
+			throw new Error("승인되고 실행 준비가 완료된 Plan만 Execution Wave를 시작할 수 있습니다.");
+		}
+		if (this.#state.stalePlan || this.#state.reconciliation) {
+			throw new Error("Plan 또는 workspace reconciliation을 완료한 뒤 Execution Wave를 시작하세요.");
+		}
+		const activePrimary = this.#state.plan.steps.find(
+			step => step.status === "in_progress" && effectiveStepExecution(step).executor === "primary",
+		);
+		const readyPrimary = readyPlanSteps(this.#state.plan).find(
+			candidate => effectiveStepExecution(candidate).executor === "primary",
+		);
+		const blockingPrimary = activePrimary ?? readyPrimary;
+		if (blockingPrimary) {
+			throw new Error(`Primary 단계 ${blockingPrimary.id}를 먼저 완료·보고한 뒤 Execution Wave를 시작하세요.`);
+		}
+
+		const workspace = await this.#captureWorkspace();
+		if (!sameWorkspaceState(this.#state.workspace, workspace)) {
+			throw new Error("현재 workspace가 Plan snapshot과 달라 Execution Wave를 시작할 수 없습니다.");
+		}
+		await this.#host.assertMutationLease?.(cloneState(this.#state));
+
+		const selection = selectExecutionWave(this.#state.plan, {
+			mode: input.mode,
+			validationConcurrency: Math.max(1, Math.trunc(input.validationConcurrency)),
+			subagentConcurrency: Math.max(1, Math.trunc(input.subagentConcurrency)),
+			requestedStepIds: input.stepIds,
+		});
+		if (selection.selected.length === 0) {
+			const reasons = selection.deferred.map(item => `${item.stepId}:${item.reason}`).join(", ");
+			throw new Error(`실행 가능한 ZZW Lane이 없습니다.${reasons ? ` ${reasons}` : ""}`);
+		}
+
+		const now = this.#now();
+		const baseWorkspaceHash = workspaceStateHash(workspace);
+		const wave: ZZWExecutionWave = {
+			id: this.#mint("wave"),
+			taskId: this.#state.taskId,
+			attemptId: this.#state.attemptId,
+			episodeId: this.#state.episodeId,
+			specVersion: this.#state.specVersion,
+			planVersion: this.#state.planVersion,
+			baseWorkspaceHash,
+			status: "prepared",
+			laneIds: [],
+			admissionOpen: input.rollingEpoch === true,
+			admissionCount: 1,
+			createdAt: now,
+		};
+		const prepared = this.#createPreparedExecutionLanes(wave, selection, workspace, input, now);
+		const { lanes } = prepared;
+
+		this.#state.workspace = workspace;
+		this.#state.workspaceId = workspace.workspaceId;
+		this.#state.execution.waves.push(wave);
+		this.#state.execution.lanes.push(...lanes);
+		this.#state.execution.activeWaveId = wave.id;
+		this.#state.phase = lanes.every(lane => lane.executor === "validator") ? "VERIFYING" : "EXECUTING";
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		for (const operation of prepared.operations) {
+			await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		}
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return {
+			wave: { ...wave, laneIds: [...wave.laneIds] },
+			lanes: cloneZZWExecutionState({ waves: [], lanes }).lanes,
+			deferred: selection.deferred.map(item => ({ ...item })),
+		};
+	}
+
+	async admitExecutionWave(waveId: string, input: TaskExecutionWaveRequest): Promise<TaskPreparedExecutionWave> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === waveId);
+		if (!wave || this.#state.execution.activeWaveId !== waveId) {
+			throw new Error(`Execution Wave ${waveId} is not active.`);
+		}
+		if (wave.admissionOpen !== true) throw new Error(`Execution Wave ${waveId} is not accepting new lanes.`);
+		if (
+			wave.specVersion !== this.#state.specVersion ||
+			wave.planVersion !== this.#state.planVersion ||
+			this.#state.plan.approval !== "approved"
+		) {
+			throw new Error(`Execution Wave ${waveId} no longer matches the approved Plan contract.`);
+		}
+		const workspace = await this.#captureWorkspace();
+		if (workspaceStateHash(workspace) !== wave.baseWorkspaceHash) {
+			throw new Error(`Execution Wave ${waveId} snapshot changed; close the epoch before admitting more lanes.`);
+		}
+		const activePrimary = this.#state.plan.steps.find(
+			step => step.status === "in_progress" && effectiveStepExecution(step).executor === "primary",
+		);
+		const readyPrimary = readyPlanSteps(this.#state.plan).find(
+			candidate => effectiveStepExecution(candidate).executor === "primary",
+		);
+		if (activePrimary || readyPrimary) {
+			return {
+				wave: { ...wave, laneIds: [...wave.laneIds] },
+				lanes: [],
+				deferred: [
+					{ stepId: (activePrimary ?? readyPrimary)?.id ?? "primary", reason: "primary-workspace-exclusive" },
+				],
+			};
+		}
+		const occupied = wave.laneIds.flatMap(id => {
+			const lane = this.#state?.execution.lanes.find(candidate => candidate.id === id);
+			if (!lane || TERMINAL_LANE_STATUSES.has(lane.status)) return [];
+			return [
+				{
+					stepId: lane.stepId,
+					executor: lane.executor,
+					resourceClaims: lane.resourceClaims.map(claim => ({ ...claim })),
+					countsTowardCapacity: ["prepared", "running", "cancel-requested"].includes(lane.status),
+				},
+			];
+		});
+		const selection = selectExecutionWave(this.#state.plan, {
+			mode: input.mode,
+			validationConcurrency: Math.max(1, Math.trunc(input.validationConcurrency)),
+			subagentConcurrency: Math.max(1, Math.trunc(input.subagentConcurrency)),
+			requestedStepIds: input.stepIds,
+			occupied,
+		});
+		if (selection.selected.length === 0) {
+			return {
+				wave: { ...wave, laneIds: [...wave.laneIds] },
+				lanes: [],
+				deferred: selection.deferred.map(item => ({ ...item })),
+			};
+		}
+		const now = this.#now();
+		const prepared = this.#createPreparedExecutionLanes(wave, selection, workspace, input, now);
+		wave.admissionCount = (wave.admissionCount ?? 1) + 1;
+		this.#state.workspace = workspace;
+		this.#state.workspaceId = workspace.workspaceId;
+		this.#state.execution.lanes.push(...prepared.lanes);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		for (const operation of prepared.operations) {
+			await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		}
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return {
+			wave: { ...wave, laneIds: [...wave.laneIds] },
+			lanes: cloneZZWExecutionState({ waves: [], lanes: prepared.lanes }).lanes,
+			deferred: selection.deferred.map(item => ({ ...item })),
+		};
+	}
+
+	async closeExecutionWaveAdmission(waveId: string): Promise<ZZWExecutionWave> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === waveId);
+		if (!wave) throw new Error(`unknown Execution Wave: ${waveId}`);
+		wave.admissionOpen = false;
+		this.#updateExecutionWave(wave, this.#now());
+		this.#state.updatedAt = this.#now();
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return { ...wave, laneIds: [...wave.laneIds] };
+	}
+
+	async markExecutionLaneRunning(laneId: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const lane = this.#state.execution.lanes.find(candidate => candidate.id === laneId);
+		if (!lane) throw new Error(`unknown execution lane: ${laneId}`);
+		if (lane.status !== "prepared") throw new Error(`lane ${laneId} is already ${lane.status}`);
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+		if (!wave) throw new Error(`unknown execution wave: ${lane.waveId}`);
+		const now = this.#now();
+		lane.status = "running";
+		lane.startedAt = now;
+		wave.status = "running";
+		wave.startedAt ??= now;
+		const operations = lane.operationIds.flatMap(id => {
+			const operation = this.#operations.get(id);
+			if (!operation) return [];
+			operation.status = "running";
+			this.#persistOperation(operation);
+			return [operation];
+		});
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		for (const operation of operations) await this.#syncZZWorkflowOperation(operation, "operation-running");
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	async settleExecutionLane(input: TaskExecutionLaneResult): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const lane = this.#state.execution.lanes.find(candidate => candidate.id === input.laneId);
+		if (!lane) throw new Error(`unknown execution lane: ${input.laneId}`);
+		if (lane.status !== "running" && lane.status !== "cancel-requested") {
+			throw new Error(`lane ${lane.id} cannot settle from ${lane.status}`);
+		}
+		const operation = lane.operationIds
+			.map(id => this.#operations.get(id))
+			.find(candidate =>
+				input.validator
+					? candidate?.validator === input.validator &&
+						(candidate.status === "prepared" || candidate.status === "running")
+					: candidate?.status === "prepared" || candidate?.status === "running",
+			);
+		if (!operation) throw new Error(`lane ${lane.id} has no unsettled operation`);
+		const now = this.#now();
+		const workspace = await this.#captureWorkspace();
+		const postStateHash = workspaceStateHash(workspace);
+		const succeeded = !input.cancelled && !input.interrupted && !input.error && input.exitCode === 0;
+		operation.status = input.cancelled
+			? "cancelled"
+			: input.interrupted
+				? "interrupted"
+				: succeeded
+					? "committed"
+					: "failed";
+		operation.postStateHash = postStateHash;
+		operation.settledAt = now;
+		const snapshotMatches = postStateHash === lane.baseWorkspaceHash;
+		const verification = operation.evidenceKind === "verification";
+		const evidence: TaskEvidence = {
+			id: this.#mint("evidence"),
+			type: verification ? "verification" : "tool_result",
+			summary: `${operation.toolName} ${succeeded ? "completed" : input.cancelled ? "cancelled" : "failed"}`,
+			createdAt: now,
+			workspaceHash: postStateHash,
+			stale: verification && !snapshotMatches,
+			staleReason: verification && !snapshotMatches ? "workspace-changed" : undefined,
+			outcome: verification ? (succeeded ? "passed" : "failed") : succeeded ? "observed" : "failed",
+			validator: operation.validator,
+			verificationIds: [...(operation.verificationIds ?? [])],
+			specVersion: this.#state.specVersion,
+			planVersion: this.#state.planVersion,
+			planStepId: lane.stepId,
+			operationId: operation.id,
+			toolName: operation.toolName,
+			commandFingerprint: operation.validator ? lifecycleHash(operation.validator) : undefined,
+			resultDigest: input.outputDigest,
+			exitCode: input.exitCode,
+			trust: verification && succeeded && snapshotMatches ? "verified" : "raw",
+			stepContractHash: lane.stepContractHash,
+		};
+		operation.evidenceId = evidence.id;
+		lane.evidenceIds.push(evidence.id);
+		lane.artifactIds.push(...(input.artifactIds ?? []));
+		lane.outputDigest = input.outputDigest;
+		lane.patchPath = input.patchPath ?? lane.patchPath;
+		lane.branchName = input.branchName ?? lane.branchName;
+		lane.error = input.error ?? lane.error;
+		this.#state.evidence.push(evidence);
+		if (input.planImpact) this.#recordLanePlanImpact(lane, input.planImpact, [evidence.id]);
+		this.#state.workspace = workspace;
+		this.#state.workspaceId = workspace.workspaceId;
+		this.#persistOperation(operation);
+
+		const allOperationsSettled = lane.operationIds.every(id => {
+			const candidate = this.#operations.get(id);
+			return candidate && candidate.status !== "prepared" && candidate.status !== "running";
+		});
+		if (allOperationsSettled) {
+			const operations = lane.operationIds.flatMap(id => {
+				const candidate = this.#operations.get(id);
+				return candidate ? [candidate] : [];
+			});
+			const allSucceeded = operations.every(candidate => candidate.status === "committed");
+			const impactLevel = lane.planImpact?.level ?? "none";
+			lane.status = input.cancelled
+				? "cancelled"
+				: input.interrupted
+					? "interrupted"
+					: impactLevel === "structural" || impactLevel === "contract"
+						? "awaiting-reconciliation"
+						: allSucceeded && impactLevel === "execution"
+							? "rejected"
+							: allSucceeded
+								? lane.executor === "subagent-isolated" && (lane.patchPath || lane.branchName)
+									? lane.reviewRequired && lane.reviewVerdict !== "pass"
+										? "awaiting-review"
+										: (lane.candidateValidators?.length ?? 0) > 0
+											? "awaiting-validation"
+											: "awaiting-integration"
+									: "succeeded"
+								: "failed";
+			lane.settledAt = now;
+		}
+
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+		if (wave) {
+			if (lane.planImpact?.level === "structural" || lane.planImpact?.level === "contract") {
+				wave.admissionOpen = false;
+			}
+			this.#updateExecutionWave(wave, now);
+		}
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-settled");
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	async prepareAdversarialReviewLane(candidateLaneId: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (candidate?.status !== "awaiting-review") {
+			throw new Error(`lane ${candidateLaneId} is not awaiting adversarial review`);
+		}
+		const existing = candidate.reviewerLaneId
+			? this.#state.execution.lanes.find(lane => lane.id === candidate.reviewerLaneId)
+			: undefined;
+		if (existing) return cloneZZWExecutionState({ waves: [], lanes: [existing] }).lanes[0];
+		const step = this.#state.plan.steps.find(item => item.id === candidate.stepId);
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (!step || !wave || step.contractHash !== candidate.stepContractHash) {
+			throw new Error(`lane ${candidateLaneId} no longer matches the approved Plan contract`);
+		}
+		const workspace = await this.#captureWorkspace();
+		const now = this.#now();
+		const lane: ZZWExecutionLane = {
+			id: this.#mint("lane"),
+			waveId: wave.id,
+			stepId: candidate.stepId,
+			workUnitId: candidate.workUnitId,
+			role: "reviewer",
+			parentLaneId: candidate.id,
+			attempt: candidate.attempt ?? 0,
+			stepContractHash: candidate.stepContractHash,
+			executor: "subagent-readonly",
+			workspaceId: workspace.workspaceId,
+			baseWorkspaceHash: workspaceStateHash(workspace),
+			status: "prepared",
+			resourceClaims: candidate.resourceClaims.map(claim => ({ ...claim, access: "read" })),
+			operationIds: [],
+			artifactIds: [],
+			evidenceIds: [],
+			capability: "system-reasoning",
+			modelSelector: candidate.reviewerModelSelector ?? "*",
+			createdAt: now,
+		};
+		const operation: TaskOperation = {
+			id: this.#mint("operation"),
+			taskId: this.#state.taskId,
+			attemptId: this.#state.attemptId,
+			episodeId: this.#state.episodeId,
+			waveId: wave.id,
+			laneId: lane.id,
+			toolCallId: `${wave.id}:${lane.id}:review`,
+			toolName: "zzw-adversarial-review",
+			tier: "exec",
+			target: step.allowedTargets?.join(",").slice(0, 512),
+			preStateHash: lane.baseWorkspaceHash,
+			intendedEffect: `Independently review candidate Lane ${candidate.id}`,
+			idempotencyKey: `${this.#state.taskId}:${this.#state.attemptId}:${wave.id}:${lane.id}:review`,
+			checkpointId: this.#state.checkpointId,
+			planStepId: step.id,
+			status: "prepared",
+			preparedAt: now,
+			evidenceKind: "operation",
+			fingerprint: operationFingerprint(
+				"zzw-adversarial-review",
+				{ candidateLaneId: candidate.id, reviewerLaneId: lane.id },
+				step.id,
+				lane.baseWorkspaceHash,
+			),
+		};
+		lane.operationIds.push(operation.id);
+		candidate.reviewerLaneId = lane.id;
+		wave.laneIds.push(lane.id);
+		wave.status = "draining";
+		this.#state.execution.lanes.push(lane);
+		this.#operations.set(operation.id, operation);
+		this.#operationByToolCall.set(operation.toolCallId, operation.id);
+		this.#persistOperation(operation);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	async recordAdversarialReview(input: TaskExecutionReviewResult): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const reviewer = this.#state.execution.lanes.find(lane => lane.id === input.reviewerLaneId);
+		if (
+			reviewer?.role !== "reviewer" ||
+			!reviewer.parentLaneId ||
+			(reviewer.status !== "succeeded" && reviewer.status !== "failed")
+		) {
+			throw new Error(`lane ${input.reviewerLaneId} is not a settled adversarial reviewer`);
+		}
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === reviewer.parentLaneId);
+		if (candidate?.status !== "awaiting-review") {
+			throw new Error(`candidate lane ${reviewer.parentLaneId} is not awaiting review`);
+		}
+		const now = this.#now();
+		const reviewImpact =
+			input.verdict === "escalate" && input.planImpact.level === "none"
+				? {
+						level: "contract" as const,
+						kind: "contract-decision" as const,
+						reason: input.findings.join("\n") || "독립 리뷰가 사용자 판단이 필요한 사안을 발견했습니다.",
+						evidence: [],
+						affectedStepIds: [candidate.stepId],
+						contradictedAssumptionIds: [],
+						proposedChanges: [],
+					}
+				: input.planImpact;
+		reviewer.reviewVerdict = input.verdict;
+		reviewer.reviewFindings = [...input.findings];
+		reviewer.residualRisks = [...input.residualRisks];
+		this.#recordLanePlanImpact(reviewer, reviewImpact, reviewer.evidenceIds);
+		candidate.reviewVerdict = input.verdict;
+		candidate.reviewFindings = [...input.findings];
+		candidate.residualRisks = [...input.residualRisks];
+		candidate.evidenceIds = [...new Set([...candidate.evidenceIds, ...reviewer.evidenceIds])];
+		candidate.planImpact = strongerPlanImpact(candidate.planImpact, reviewImpact);
+		if (PLAN_IMPACT_RANK[reviewImpact.level] >= PLAN_IMPACT_RANK[candidate.planImpact?.level ?? "none"]) {
+			candidate.planImpactObservationId = reviewer.planImpactObservationId;
+		}
+		const impactLevel = candidate.planImpact?.level ?? "none";
+		candidate.status =
+			impactLevel === "structural" || impactLevel === "contract"
+				? "awaiting-reconciliation"
+				: input.verdict === "pass" && impactLevel === "none"
+					? (candidate.candidateValidators?.length ?? 0) > 0
+						? "awaiting-validation"
+						: "awaiting-integration"
+					: "rejected";
+		candidate.settledAt = ["awaiting-validation", "awaiting-integration"].includes(candidate.status)
+			? undefined
+			: now;
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (wave) {
+			if (impactLevel === "structural" || impactLevel === "contract") wave.admissionOpen = false;
+			this.#updateExecutionWave(wave, now);
+		}
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes: [candidate] }).lanes[0];
+	}
+
+	async prepareRepairLane(candidateLaneId: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (
+			candidate?.status !== "rejected" ||
+			(candidate.reviewVerdict !== "reject" && candidate.planImpact?.level !== "execution")
+		) {
+			throw new Error(`lane ${candidateLaneId} is not repairable after adversarial review`);
+		}
+		const nextAttempt = (candidate.attempt ?? 0) + 1;
+		if (nextAttempt > (candidate.maxRepairAttempts ?? 0)) {
+			throw new Error(`lane ${candidateLaneId} exhausted its repair attempts`);
+		}
+		const step = this.#state.plan.steps.find(item => item.id === candidate.stepId);
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (!step || !wave || step.contractHash !== candidate.stepContractHash) {
+			throw new Error(`lane ${candidateLaneId} no longer matches the approved Plan contract`);
+		}
+		const workspace = await this.#captureWorkspace();
+		const now = this.#now();
+		const lane: ZZWExecutionLane = {
+			...candidate,
+			id: this.#mint("lane"),
+			role: "repair",
+			parentLaneId: candidate.id,
+			attempt: nextAttempt,
+			workspaceId: workspace.workspaceId,
+			baseWorkspaceHash: workspaceStateHash(workspace),
+			status: "prepared",
+			operationIds: [],
+			artifactIds: [],
+			evidenceIds: [],
+			modelSelector: candidate.repairModelSelector ?? candidate.modelSelector ?? "*",
+			reviewerLaneId: undefined,
+			reviewVerdict: undefined,
+			reviewFindings: [
+				...(candidate.reviewFindings ?? []),
+				...(candidate.planImpact?.level === "execution" ? [candidate.planImpact.reason] : []),
+			],
+			residualRisks: undefined,
+			planImpact: undefined,
+			planImpactObservationId: undefined,
+			validatorLaneIds: undefined,
+			repairAttempts: nextAttempt,
+			outputDigest: undefined,
+			patchPath: undefined,
+			branchName: undefined,
+			error: undefined,
+			createdAt: now,
+			startedAt: undefined,
+			settledAt: undefined,
+		};
+		const operation: TaskOperation = {
+			id: this.#mint("operation"),
+			taskId: this.#state.taskId,
+			attemptId: this.#state.attemptId,
+			episodeId: this.#state.episodeId,
+			waveId: wave.id,
+			laneId: lane.id,
+			toolCallId: `${wave.id}:${lane.id}:repair-${nextAttempt}`,
+			toolName: "zzw-work-unit-repair",
+			tier: "write",
+			target: step.allowedTargets?.join(",").slice(0, 512),
+			preStateHash: lane.baseWorkspaceHash,
+			intendedEffect: `Repair rejected Work Unit ${candidate.workUnitId ?? candidate.stepId}`,
+			idempotencyKey: `${this.#state.taskId}:${this.#state.attemptId}:${wave.id}:${lane.id}:repair-${nextAttempt}`,
+			checkpointId: this.#state.checkpointId,
+			planStepId: step.id,
+			status: "prepared",
+			preparedAt: now,
+			evidenceKind: "operation",
+			fingerprint: operationFingerprint(
+				"zzw-work-unit-repair",
+				{ candidateLaneId: candidate.id, repairLaneId: lane.id, attempt: nextAttempt },
+				step.id,
+				lane.baseWorkspaceHash,
+			),
+		};
+		lane.operationIds.push(operation.id);
+		candidate.status = "superseded";
+		candidate.settledAt = now;
+		wave.laneIds.push(lane.id);
+		wave.status = "running";
+		this.#state.execution.lanes.push(lane);
+		this.#operations.set(operation.id, operation);
+		this.#operationByToolCall.set(operation.toolCallId, operation.id);
+		this.#persistOperation(operation);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	async finalizeAdversarialReviewFailure(candidateLaneId: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (candidate?.status !== "rejected") throw new Error(`lane ${candidateLaneId} is not rejected`);
+		const now = this.#now();
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (wave) this.#updateExecutionWave(wave, now);
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return cloneZZWExecutionState({ waves: [], lanes: [candidate] }).lanes[0];
+	}
+
+	async failCandidateGate(candidateLaneId: string, reason: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (
+			!candidate ||
+			!["awaiting-review", "awaiting-validation", "awaiting-integration", "rejected"].includes(candidate.status)
+		) {
+			throw new Error(`lane ${candidateLaneId} has no active candidate gate`);
+		}
+		const now = this.#now();
+		candidate.status = "rejected";
+		candidate.reviewVerdict = "escalate";
+		candidate.reviewFindings = [...(candidate.reviewFindings ?? []), reason];
+		candidate.error = reason;
+		candidate.settledAt = now;
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (wave) this.#updateExecutionWave(wave, now);
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return cloneZZWExecutionState({ waves: [], lanes: [candidate] }).lanes[0];
+	}
+
+	async prepareCandidateValidatorLanes(candidateLaneId: string): Promise<ZZWExecutionLane[]> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (candidate?.status !== "awaiting-validation") {
+			throw new Error(`lane ${candidateLaneId} is not awaiting candidate validation`);
+		}
+		if (candidate.validatorLaneIds?.length) {
+			return cloneZZWExecutionState({
+				waves: [],
+				lanes: this.#state.execution.lanes.filter(lane => candidate.validatorLaneIds?.includes(lane.id)),
+			}).lanes;
+		}
+		const step = this.#state.plan.steps.find(item => item.id === candidate.stepId);
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (!step || !wave) throw new Error(`candidate lane ${candidateLaneId} has no active Plan Wave`);
+		const workspace = await this.#captureWorkspace();
+		const now = this.#now();
+		const lanes: ZZWExecutionLane[] = [];
+		const operations: TaskOperation[] = [];
+		for (const [index, validator] of (candidate.candidateValidators ?? []).entries()) {
+			const lane: ZZWExecutionLane = {
+				id: this.#mint("lane"),
+				waveId: wave.id,
+				stepId: candidate.stepId,
+				workUnitId: candidate.workUnitId,
+				role: "validator",
+				parentLaneId: candidate.id,
+				attempt: candidate.attempt,
+				stepContractHash: candidate.stepContractHash,
+				executor: "validator",
+				workspaceId: workspace.workspaceId,
+				baseWorkspaceHash: workspaceStateHash(workspace),
+				status: "prepared",
+				resourceClaims: candidate.resourceClaims.map(claim => ({ ...claim })),
+				operationIds: [],
+				artifactIds: [],
+				evidenceIds: [],
+				validators: [validator],
+				maxRuntimeMs: candidate.maxRuntimeMs,
+				createdAt: now,
+			};
+			const operation: TaskOperation = {
+				id: this.#mint("operation"),
+				taskId: this.#state.taskId,
+				attemptId: this.#state.attemptId,
+				episodeId: this.#state.episodeId,
+				waveId: wave.id,
+				laneId: lane.id,
+				toolCallId: `${wave.id}:${lane.id}:candidate-validator-${index}`,
+				toolName: "zzw-work-unit-validator",
+				tier: "exec",
+				target: candidate.patchPath,
+				preStateHash: lane.baseWorkspaceHash,
+				intendedEffect: `Validate candidate Lane ${candidate.id}: ${validator}`,
+				idempotencyKey: `${this.#state.taskId}:${this.#state.attemptId}:${wave.id}:${lane.id}:candidate-validator-${index}`,
+				checkpointId: this.#state.checkpointId,
+				planStepId: step.id,
+				status: "prepared",
+				preparedAt: now,
+				evidenceKind: "verification",
+				validator,
+				verificationIds: [],
+				fingerprint: operationFingerprint(
+					"zzw-work-unit-validator",
+					{ candidateLaneId: candidate.id, validator },
+					step.id,
+					lane.baseWorkspaceHash,
+				),
+			};
+			lane.operationIds.push(operation.id);
+			wave.laneIds.push(lane.id);
+			lanes.push(lane);
+			operations.push(operation);
+			this.#operations.set(operation.id, operation);
+			this.#operationByToolCall.set(operation.toolCallId, operation.id);
+			this.#persistOperation(operation);
+		}
+		candidate.validatorLaneIds = lanes.map(lane => lane.id);
+		wave.status = "draining";
+		this.#state.execution.lanes.push(...lanes);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		for (const operation of operations) await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes }).lanes;
+	}
+
+	async completeCandidateValidation(candidateLaneId: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const candidate = this.#state.execution.lanes.find(lane => lane.id === candidateLaneId);
+		if (candidate?.status !== "awaiting-validation" || !candidate.validatorLaneIds?.length) {
+			throw new Error(`lane ${candidateLaneId} has no completed candidate validation set`);
+		}
+		const validators = candidate.validatorLaneIds.flatMap(id => {
+			const lane = this.#state?.execution.lanes.find(item => item.id === id);
+			return lane ? [lane] : [];
+		});
+		if (validators.some(lane => !TERMINAL_LANE_STATUSES.has(lane.status))) {
+			throw new Error(`lane ${candidateLaneId} validators are still running`);
+		}
+		const now = this.#now();
+		const allSucceeded =
+			validators.length === candidate.validatorLaneIds.length &&
+			validators.every(lane => lane.status === "succeeded");
+		candidate.evidenceIds.push(...validators.flatMap(lane => lane.evidenceIds));
+		candidate.artifactIds.push(...validators.flatMap(lane => lane.artifactIds));
+		candidate.status = allSucceeded ? "awaiting-integration" : "rejected";
+		candidate.error = allSucceeded
+			? undefined
+			: (validators.find(lane => lane.status !== "succeeded")?.error ?? "Candidate validation failed.");
+		if (!allSucceeded) {
+			candidate.reviewVerdict = "reject";
+			candidate.reviewFindings = [
+				...(candidate.reviewFindings ?? []),
+				candidate.error ?? "Candidate validation failed.",
+			];
+		}
+		candidate.settledAt = allSucceeded ? undefined : now;
+		const wave = this.#state.execution.waves.find(item => item.id === candidate.waveId);
+		if (wave) {
+			wave.status = "draining";
+			if (!allSucceeded) this.#updateExecutionWave(wave, now);
+		}
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneZZWExecutionState({ waves: [], lanes: [candidate] }).lanes[0];
+	}
+
+	async prepareLaneIntegration(laneId: string): Promise<TaskOperation> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const lane = this.#state.execution.lanes.find(candidate => candidate.id === laneId);
+		if (lane?.status !== "awaiting-integration") {
+			throw new Error(`lane ${laneId} is not awaiting integration`);
+		}
+		const step = this.#state.plan.steps.find(candidate => candidate.id === lane.stepId);
+		if (!step || step.contractHash !== lane.stepContractHash) {
+			throw new Error(`lane ${laneId}의 Plan step contract가 변경되어 통합할 수 없습니다.`);
+		}
+		const workspace = await this.#captureWorkspace();
+		await this.#host.assertMutationLease?.(cloneState(this.#state));
+		const now = this.#now();
+		const operation: TaskOperation = {
+			id: this.#mint("operation"),
+			taskId: this.#state.taskId,
+			attemptId: this.#state.attemptId,
+			episodeId: this.#state.episodeId,
+			waveId: lane.waveId,
+			laneId: lane.id,
+			toolCallId: `${lane.waveId}:${lane.id}:integration`,
+			toolName: "zzw-integrate",
+			tier: "write",
+			target: step.allowedTargets?.join(",").slice(0, 512),
+			preStateHash: workspaceStateHash(workspace),
+			intendedEffect: `Integrate isolated lane ${lane.id} for Plan step ${step.id}`,
+			idempotencyKey: `${this.#state.taskId}:${this.#state.attemptId}:${lane.waveId}:${lane.id}:integration`,
+			checkpointId: this.#state.checkpointId,
+			planStepId: step.id,
+			status: "prepared",
+			preparedAt: now,
+			evidenceKind: "operation",
+			fingerprint: operationFingerprint(
+				"zzw-integrate",
+				{ laneId: lane.id, stepId: step.id, patchPath: lane.patchPath, branchName: lane.branchName },
+				step.id,
+				workspaceStateHash(workspace),
+			),
+		};
+		lane.operationIds.push(operation.id);
+		this.#operations.set(operation.id, operation);
+		this.#operationByToolCall.set(operation.toolCallId, operation.id);
+		this.#persistOperation(operation);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.ensureOnDisk();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-prepared");
+		operation.status = "running";
+		this.#persistOperation(operation);
+		this.#refreshPendingOperations();
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-running");
+		await this.#syncZZWorkflowState("execution-updated");
+		return cloneOperation(operation);
+	}
+
+	async cancelLaneBeforeIntegration(laneId: string, reason: string): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const lane = this.#state.execution.lanes.find(candidate => candidate.id === laneId);
+		if (lane?.status !== "awaiting-integration") {
+			throw new Error(`lane ${laneId} is not awaiting integration`);
+		}
+		const now = this.#now();
+		lane.status = "cancelled";
+		lane.error = reason;
+		lane.settledAt = now;
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+		if (wave) this.#updateExecutionWave(wave, now);
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	async settleLaneIntegration(input: TaskExecutionLaneIntegrationResult): Promise<ZZWExecutionLane> {
+		if (!this.#state) throw new Error("no active controlled task");
+		const lane = this.#state.execution.lanes.find(candidate => candidate.id === input.laneId);
+		if (lane?.status !== "awaiting-integration") {
+			throw new Error(`lane ${input.laneId} is not awaiting integration`);
+		}
+		const operation = lane.operationIds
+			.map(id => this.#operations.get(id))
+			.find(
+				candidate =>
+					candidate?.toolName === "zzw-integrate" &&
+					(candidate.status === "prepared" || candidate.status === "running"),
+			);
+		if (!operation) throw new Error(`lane ${lane.id} has no prepared integration operation`);
+		const now = this.#now();
+		const workspace = await this.#captureWorkspace();
+		operation.status = input.succeeded ? "committed" : "failed";
+		operation.postStateHash = workspaceStateHash(workspace);
+		operation.settledAt = now;
+		const evidence: TaskEvidence = {
+			id: this.#mint("evidence"),
+			type: "tool_result",
+			summary: `zzw-integrate ${input.succeeded ? "completed" : "failed"}`,
+			createdAt: now,
+			workspaceHash: operation.postStateHash,
+			stale: false,
+			outcome: input.succeeded ? "observed" : "failed",
+			specVersion: this.#state.specVersion,
+			planVersion: this.#state.planVersion,
+			planStepId: lane.stepId,
+			operationId: operation.id,
+			toolName: operation.toolName,
+			resultDigest: input.outputDigest,
+			trust: "raw",
+			stepContractHash: lane.stepContractHash,
+		};
+		operation.evidenceId = evidence.id;
+		lane.evidenceIds.push(evidence.id);
+		lane.error = input.error ?? lane.error;
+		lane.status = input.succeeded ? "integrated" : "rejected";
+		lane.settledAt = now;
+		this.#state.evidence.push(evidence);
+		this.#state.workspace = workspace;
+		this.#state.workspaceId = workspace.workspaceId;
+		this.#persistOperation(operation);
+		const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+		if (wave) this.#updateExecutionWave(wave, now);
+		this.#refreshPendingOperations();
+		this.#state.updatedAt = now;
+		this.#persistState();
+		await this.#host.flush();
+		await this.#syncZZWorkflowOperation(operation, "operation-settled");
+		await this.#syncZZWorkflowState("execution-updated");
+		await this.#publishPlanProjection();
+		return cloneZZWExecutionState({ waves: [], lanes: [lane] }).lanes[0];
+	}
+
+	#recordLanePlanImpact(lane: ZZWExecutionLane, impact: ZZWPlanImpact, evidenceIds: string[]): void {
+		if (!this.#state) return;
+		lane.planImpact = strongerPlanImpact(lane.planImpact, impact);
+		if (impact.level === "none") return;
+		const knownStepIds = new Set(this.#state.plan.steps.map(step => step.id));
+		const knownAssumptionIds = new Set(
+			this.#state.specification.statements
+				.filter(statement => statement.type === "assumption")
+				.map(statement => statement.id),
+		);
+		const affectedStepIds = [...new Set([lane.stepId, ...impact.affectedStepIds.filter(id => knownStepIds.has(id))])];
+		const contradictedAssumptionIds = impact.contradictedAssumptionIds.filter(id => knownAssumptionIds.has(id));
+		const statement = [
+			impact.reason,
+			...impact.evidence.map(item => `근거: ${item}`),
+			...impact.proposedChanges.map(item => `제안: ${item}`),
+		].join("\n");
+		const observation: TaskObservation = {
+			id: this.#mint("observation"),
+			kind: impact.level === "contract" ? "risk" : impact.level === "structural" ? "contradiction" : "fact",
+			statement,
+			evidenceIds: [...evidenceIds],
+			confidence: 0.7,
+			affects: [
+				...affectedStepIds.map(id => ({ type: "step" as const, id })),
+				...contradictedAssumptionIds.map(id => ({ type: "assumption" as const, id })),
+			],
+			createdAt: this.#now(),
+		};
+		this.#state.observations ??= [];
+		this.#state.observations.push(observation);
+		lane.planImpactObservationId = observation.id;
+	}
+
+	#updateExecutionWave(wave: ZZWExecutionWave, now: number): void {
+		if (!this.#state) return;
+		const waveLanes = wave.laneIds.flatMap(id => {
+			const candidate = this.#state?.execution.lanes.find(item => item.id === id);
+			return candidate ? [candidate] : [];
+		});
+		const outcomeLanes = selectZZWExecutionOutcomeLanes(waveLanes);
+		if (
+			waveLanes.some(candidate =>
+				["awaiting-review", "awaiting-validation", "awaiting-integration"].includes(candidate.status),
+			)
+		) {
+			wave.status = "draining";
+			return;
+		}
+		if (!outcomeLanes.every(candidate => TERMINAL_LANE_STATUSES.has(candidate.status))) return;
+		if (wave.admissionOpen === true) {
+			wave.status = "running";
+			return;
+		}
+		wave.status = outcomeLanes.some(candidate =>
+			["failed", "rejected", "awaiting-reconciliation"].includes(candidate.status),
+		)
+			? "reconciling"
+			: outcomeLanes.some(
+						candidate =>
+							candidate.status === "cancelled" ||
+							candidate.status === "unknown" ||
+							candidate.status === "interrupted",
+					)
+				? "interrupted"
+				: "settled";
+		wave.settledAt = now;
+		this.#state.execution.activeWaveId = undefined;
+		const cancelledStepIds = new Set(
+			outcomeLanes.filter(candidate => candidate.status === "cancelled").map(candidate => candidate.stepId),
+		);
+		for (const stepId of cancelledStepIds) {
+			const step = this.#state.plan.steps.find(candidate => candidate.id === stepId);
+			if (step?.status === "in_progress" && step.rerunPolicy !== "never") step.status = "pending";
+		}
+		const failedLane =
+			outcomeLanes.find(candidate => candidate.status === "awaiting-reconciliation") ??
+			outcomeLanes.find(candidate => ["failed", "interrupted", "unknown", "rejected"].includes(candidate.status));
+		if (!failedLane) {
+			if (wave.status === "interrupted") this.#state.phase = "READY";
+			return;
+		}
+		const step = this.#state.plan.steps.find(candidate => candidate.id === failedLane.stepId);
+		if (step) step.status = "blocked";
+		const planImpact = failedLane.planImpact;
+		const planChangeRequired = planImpact?.level === "structural" || planImpact?.level === "contract";
+		if (planChangeRequired) {
+			this.#state.stalePlan = true;
+			this.#state.plan.status = "stale";
+		}
+		this.#state.reconciliation = {
+			stepId: failedLane.stepId,
+			laneId: failedLane.id,
+			operationId: failedLane.operationIds.at(-1),
+			observationId: failedLane.planImpactObservationId,
+			evidenceIds: [...failedLane.evidenceIds],
+			planImpact: cloneZZWPlanImpact(planImpact),
+			classification: planImpact
+				? planImpactClassification(planImpact)
+				: failedLane.executor === "validator"
+					? "verification-failure"
+					: "execution-failure",
+			repeatedFailures: 1,
+			requiredAction:
+				planImpact?.level === "contract"
+					? "request-user"
+					: planImpact?.level === "structural"
+						? "patch-plan"
+						: "classify-result",
+			createdAt: now,
+		};
+		this.#state.phase =
+			planImpact?.level === "contract"
+				? "AWAITING_USER"
+				: planImpact?.level === "structural"
+					? "REPLANNING"
+					: "RECONCILING";
 	}
 
 	#now(): number {
@@ -1942,7 +3898,11 @@ export class TaskLifecycleRuntime {
 	#refreshPendingOperations(): void {
 		if (!this.#state) return;
 		this.#state.pendingOperationIds = [...this.#operations.values()]
-			.filter(operation => operation.taskId === this.#state?.taskId && operation.status === "prepared")
+			.filter(
+				operation =>
+					operation.taskId === this.#state?.taskId &&
+					(operation.status === "prepared" || operation.status === "running" || operation.status === "unknown"),
+			)
 			.map(operation => operation.id);
 	}
 
@@ -1959,6 +3919,102 @@ export class TaskLifecycleRuntime {
 			this.#operationByToolCall.set(operation.toolCallId, operation.id);
 		}
 		if (this.#state) {
+			for (const wave of this.#state.execution.waves) {
+				if (wave.admissionOpen === true) wave.admissionOpen = false;
+			}
+			for (const operation of this.#operations.values()) {
+				if (!operation.laneId) continue;
+				const lane = this.#state.execution.lanes.find(candidate => candidate.id === operation.laneId);
+				if (lane && !lane.operationIds.includes(operation.id)) lane.operationIds.push(operation.id);
+			}
+			for (const operation of this.#operations.values()) {
+				if (operation.status !== "running") continue;
+				operation.status = "unknown";
+				const lane = this.#state.execution.lanes.find(
+					candidate => candidate.id === operation.laneId || candidate.operationIds.includes(operation.id),
+				);
+				if (lane && ["prepared", "running", "cancel-requested"].includes(lane.status)) lane.status = "unknown";
+				const wave = lane ? this.#state.execution.waves.find(candidate => candidate.id === lane.waveId) : undefined;
+				if (wave) wave.status = "interrupted";
+			}
+			const now = this.#now();
+			for (const lane of this.#state.execution.lanes) {
+				const operations = lane.operationIds.flatMap(id => {
+					const operation = this.#operations.get(id);
+					return operation ? [operation] : [];
+				});
+				const integrationOperations = operations.filter(operation => operation.toolName === "zzw-integrate");
+				if (
+					["awaiting-review", "awaiting-validation"].includes(lane.status) ||
+					(lane.status === "awaiting-integration" && integrationOperations.length === 0)
+				) {
+					lane.status = "interrupted";
+					lane.error =
+						"Candidate Lane did not finish its review, validation, and integration gate before restart.";
+					lane.settledAt = now;
+					const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+					if (wave) this.#updateExecutionWave(wave, now);
+					continue;
+				}
+				const integrationMismatch = integrationOperations.find(
+					operation =>
+						(operation.status === "committed" && lane.status !== "integrated") ||
+						(operation.status === "failed" && lane.status !== "rejected"),
+				);
+				if (integrationMismatch) {
+					integrationMismatch.status = "unknown";
+					lane.status = "unknown";
+					lane.error = "Integration operation and Lane state disagree after restart.";
+					const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+					if (wave) wave.status = "interrupted";
+				}
+			}
+			for (const wave of this.#state.execution.waves.filter(candidate => candidate.status === "settled")) {
+				const waveLanes = wave.laneIds.flatMap(id => {
+					const lane = this.#state?.execution.lanes.find(candidate => candidate.id === id);
+					return lane ? [lane] : [];
+				});
+				for (const stepId of new Set(waveLanes.map(lane => lane.stepId))) {
+					const step = this.#state.plan.steps.find(candidate => candidate.id === stepId);
+					if (step?.status !== "in_progress") continue;
+					const stepLanes = selectZZWExecutionOutcomeLanes(waveLanes.filter(lane => lane.stepId === stepId));
+					const lanesSucceeded = stepLanes.every(lane =>
+						lane.executor === "subagent-isolated" ? lane.status === "integrated" : lane.status === "succeeded",
+					);
+					if (!lanesSucceeded) continue;
+					const evidence = stepLanes.flatMap(lane =>
+						lane.evidenceIds.flatMap(id => {
+							const item = this.#state?.evidence.find(candidate => candidate.id === id);
+							return item ? [item] : [];
+						}),
+					);
+					if (isValidationStep(step)) {
+						const workspaceHash = workspaceStateHash(this.#state.workspace);
+						const current = evidence.filter(
+							item =>
+								item.type === "verification" &&
+								item.trust === "verified" &&
+								item.outcome === "passed" &&
+								!item.stale &&
+								item.specVersion === this.#state?.specVersion &&
+								item.planStepId === step.id &&
+								item.workspaceHash === workspaceHash &&
+								(item.planVersion === this.#state?.planVersion || item.stepContractHash === step.contractHash),
+						);
+						const validatorsSatisfied = (step.validators ?? []).every(validator =>
+							current.some(item => item.validator === validator),
+						);
+						const requirementsSatisfied = (step.verificationIds ?? []).every(verificationId =>
+							current.some(item => item.verificationIds?.includes(verificationId) === true),
+						);
+						if ((step.validators?.length ?? 0) > 0 && validatorsSatisfied && requirementsSatisfied) {
+							step.status = "completed";
+						}
+					} else if (evidence.some(item => item.outcome !== "failed")) {
+						step.status = "completed";
+					}
+				}
+			}
 			this.#state.readiness = readinessFor(
 				this.#state.specification,
 				this.#state.workspace,
@@ -2018,6 +4074,7 @@ export class TaskLifecycleRuntime {
 			episode,
 			evidence: [],
 			observations: [],
+			execution: cloneZZWExecutionState(EMPTY_ZZW_EXECUTION_STATE),
 			pendingOperationIds: [],
 			stalePlan: false,
 			createdAt: now,
@@ -2300,6 +4357,9 @@ export class TaskLifecycleRuntime {
 
 	async proposePlan(input: { basedOnSpecVersion: number; steps: TaskPlanStepProposal[] }): Promise<TaskPlan> {
 		if (!this.#state || TERMINAL_PHASES.has(this.#state.phase)) throw new Error("no active controlled task");
+		if (this.#state.execution.activeWaveId || this.#state.pendingOperationIds.length > 0) {
+			throw new Error("Execution Wave와 미해결 operation을 먼저 종료·복구한 뒤 Plan을 교체하세요.");
+		}
 		if (input.basedOnSpecVersion !== this.#state.specVersion) {
 			throw new Error(
 				`STALE_SPEC_VERSION: current specification version is ${this.#state.specVersion}; read ZZWorkflow state and retry`,
@@ -2312,7 +4372,7 @@ export class TaskLifecycleRuntime {
 		const nextVersion = this.#state.planVersion + 1;
 		const previousVersion = this.#state.planVersion;
 		const steps = input.steps.map(step => normalizePlanStep(step, specification, nextVersion));
-		validatePlanSteps(steps, specification);
+		validatePlanSteps(steps, specification, this.#planValidationOptions());
 		this.#state.planVersion = nextVersion;
 		this.#state.plan = {
 			version: nextVersion,
@@ -2381,13 +4441,23 @@ export class TaskLifecycleRuntime {
 
 	async approvePlan(): Promise<TaskPlan> {
 		if (!this.#state || TERMINAL_PHASES.has(this.#state.phase)) throw new Error("no active controlled task");
+		if (this.#state.execution.activeWaveId || this.#state.pendingOperationIds.length > 0) {
+			throw new Error("Execution Wave와 미해결 operation을 먼저 종료·복구한 뒤 Plan을 승인하세요.");
+		}
 		if (this.#state.reconciliation) {
 			throw new Error("active reconciliation must be classified and resolved before Plan approval can continue");
 		}
 		if (this.#state.stalePlan || this.#state.plan.status === "stale") {
 			throw new Error("stale plan cannot be approved; propose a reconciled plan first");
 		}
-		validatePlanSteps(this.#state.plan.steps, this.#state.specification);
+		const validationOptions = this.#planValidationOptions();
+		const approvalSteps = normalizeLegacyDelegationAssessmentsForApproval(
+			this.#state.plan.steps,
+			this.#state.specification,
+			validationOptions.requireDelegationAssessment === true,
+		);
+		validatePlanSteps(approvalSteps, this.#state.specification, validationOptions);
+		this.#state.plan.steps = approvalSteps;
 		this.#state.plan.approval = "approved";
 		this.#state.plan.approvedAt = this.#now();
 		this.#state.plan.approvedBySessionId = this.#host.getSessionId();
@@ -2409,6 +4479,9 @@ export class TaskLifecycleRuntime {
 
 	async patchPlan(patch: TaskPlanPatch): Promise<TaskPlan> {
 		if (!this.#state || TERMINAL_PHASES.has(this.#state.phase)) throw new Error("no active controlled task");
+		if (this.#state.execution.activeWaveId || this.#state.pendingOperationIds.length > 0) {
+			throw new Error("Execution Wave와 미해결 operation을 먼저 종료·복구한 뒤 Plan을 수정하세요.");
+		}
 		if (patch.basedOnPlanVersion !== this.#state.planVersion) {
 			throw new Error(
 				`STALE_PLAN_VERSION: current plan version is ${this.#state.planVersion}; read ZZWorkflow state and retry`,
@@ -2472,6 +4545,7 @@ export class TaskLifecycleRuntime {
 			...removeIds,
 			...updates.keys(),
 			...patch.failedStepIds,
+			...patch.addSteps.flatMap(step => step.supersedes ?? []),
 			...referencedObservations.flatMap(observation =>
 				observation.affects.filter(affected => affected.type === "step").map(affected => affected.id),
 			),
@@ -2519,7 +4593,8 @@ export class TaskLifecycleRuntime {
 			const update = updates.get(step.id);
 			const replacements = replacementIds.get(step.id) ?? [];
 			let status = step.status;
-			if (removeIds.has(step.id)) status = replacements.length > 0 ? "superseded" : "invalidated";
+			if (replacements.length > 0) status = "superseded";
+			else if (removeIds.has(step.id)) status = "invalidated";
 			else if (update) status = "pending";
 			else if (affectedIds.has(step.id)) status = step.status === "completed" ? "invalidated" : "pending";
 			const changed: TaskPlanStep = {
@@ -2545,6 +4620,11 @@ export class TaskLifecycleRuntime {
 				assumptionIds: [...(update?.assumptionIds ?? step.assumptionIds ?? [])],
 				consumesArtifacts: [...(update?.consumesArtifacts ?? step.consumesArtifacts ?? [])],
 				producesArtifacts: [...(update?.producesArtifacts ?? step.producesArtifacts ?? [])],
+				execution: update?.execution
+					? cloneZZWStepExecutionContract(update.execution)
+					: step.execution
+						? cloneZZWStepExecutionContract(step.execution)
+						: undefined,
 				originPlanVersion: step.originPlanVersion ?? currentPlan.version,
 				lastChangedPlanVersion: update || removeIds.has(step.id) ? nextVersion : step.lastChangedPlanVersion,
 			};
@@ -2552,7 +4632,7 @@ export class TaskLifecycleRuntime {
 		});
 		steps.push(...patch.addSteps.map(step => normalizePlanStep(step, specification, nextVersion)));
 		const normalizedSteps = steps.map(step => normalizePlanStepReferences(step, specification));
-		validatePlanSteps(normalizedSteps, specification);
+		validatePlanSteps(normalizedSteps, specification, this.#planValidationOptions());
 		const approvalImpact: TaskPlanApprovalImpact = currentPlan.steps.some(
 			step => step.status === "completed" && affectedIds.has(step.id),
 		)
@@ -2734,6 +4814,8 @@ export class TaskLifecycleRuntime {
 				: input.unexpectedEffects.length > 0
 					? "unexpected-effect"
 					: "execution-failure");
+		const completingApprovedPreconditionRecovery =
+			isApprovedPreconditionRecovery(this.#state) && this.#state.reconciliation?.stepId === step.id;
 		if (input.status === "completed") {
 			if (classification !== "matched" || input.unexpectedEffects.length > 0) {
 				throw new Error("completed status requires matched classification and no unexpected effects");
@@ -2745,12 +4827,24 @@ export class TaskLifecycleRuntime {
 				throw new Error(`step ${step.id} requires current operation evidence before completion`);
 			}
 			step.status = "completed";
-			this.#state.reconciliation = undefined;
-			this.#state.phase = activePlanStep(this.#state.plan)?.kind === "validation" ? "VERIFYING" : "EXECUTING";
+			if (this.#state.reconciliation?.stepId === step.id) this.#state.reconciliation = undefined;
+			if (!this.#state.reconciliation) {
+				this.#state.phase = activePlanStep(this.#state.plan)?.kind === "validation" ? "VERIFYING" : "EXECUTING";
+			}
 		} else if ((input.status === "partial" || input.status === "progress") && classification === "matched") {
-			step.status = "in_progress";
-			this.#state.reconciliation = undefined;
-			this.#state.phase = "EXECUTING";
+			if (
+				completingApprovedPreconditionRecovery &&
+				!evidence.some(item => item.type === "tool_result" && item.outcome === "observed")
+			) {
+				throw new Error(
+					"approved precondition recovery requires current successful operation evidence before validation can retry",
+				);
+			}
+			step.status = completingApprovedPreconditionRecovery ? "pending" : "in_progress";
+			if (this.#state.reconciliation?.stepId === step.id) this.#state.reconciliation = undefined;
+			if (!this.#state.reconciliation) {
+				this.#state.phase = completingApprovedPreconditionRecovery ? "READY" : "EXECUTING";
+			}
 		} else {
 			step.status = "blocked";
 			const repeatedFailures =
@@ -2772,8 +4866,22 @@ export class TaskLifecycleRuntime {
 					throw new Error("routine feedback requires current failed operation evidence");
 				}
 				step.status = "in_progress";
-				this.#state.reconciliation = undefined;
-				this.#state.phase = step.kind === "validation" ? "READY" : "EXECUTING";
+				if (classification === "missing-precondition" && isValidationStep(step)) {
+					this.#state.reconciliation = {
+						stepId: step.id,
+						operationId: this.#state.reconciliation?.operationId,
+						evidenceIds: [...input.evidenceIds],
+						classification,
+						failureFingerprint: this.#state.reconciliation?.failureFingerprint,
+						repeatedFailures,
+						requiredAction: "satisfy-approved-precondition",
+						createdAt: this.#state.reconciliation?.createdAt ?? this.#now(),
+					};
+					this.#state.phase = "RECONCILING";
+				} else {
+					this.#state.reconciliation = undefined;
+					this.#state.phase = step.kind === "validation" ? "READY" : "EXECUTING";
+				}
 			} else {
 				const executionRetryWindow =
 					classification === "execution-failure" && step.rerunPolicy !== "never" && repeatedFailures < 2;
@@ -2879,8 +4987,9 @@ export class TaskLifecycleRuntime {
 			}
 		}
 		step.status = "completed";
-		this.#state.reconciliation = undefined;
-		this.#state.phase = unfinishedPlanSteps(this.#state.plan).length === 0 ? "COMPLETING" : "EXECUTING";
+		if (!this.#state.reconciliation) {
+			this.#state.phase = unfinishedPlanSteps(this.#state.plan).length === 0 ? "COMPLETING" : "EXECUTING";
+		}
 		this.#state.updatedAt = this.#now();
 		this.#persistState();
 		await this.#host.flush();
@@ -2949,12 +5058,13 @@ export class TaskLifecycleRuntime {
 				`Task recovery is required before another mutation: reconcile prepared operation ${this.#state.pendingOperationIds[0]} with goal({op:"recover", operation_id:"${this.#state.pendingOperationIds[0]}", resolution:"committed"|"failed"|"compensated"}).`,
 			);
 		}
+		const approvedPreconditionRecovery = isApprovedPreconditionRecovery(this.#state);
 		if (this.#state.stalePlan || this.#state.phase === "RECOVERING" || this.#state.phase === "REPLANNING") {
 			throw new Error(
 				"Task plan is stale; propose a minimal ZZWorkflow plan patch before starting another mutation.",
 			);
 		}
-		if (this.#state.reconciliation || this.#state.phase === "RECONCILING") {
+		if ((this.#state.reconciliation || this.#state.phase === "RECONCILING") && !approvedPreconditionRecovery) {
 			throw new Error("Task reconciliation must be resolved before another mutation.");
 		}
 		if (!this.#state.readiness.ready) {
@@ -2963,12 +5073,27 @@ export class TaskLifecycleRuntime {
 				`Task readiness checks are incomplete (${blockers}); propose and obtain user approval for the ZZWorkflow plan before execution.`,
 			);
 		}
-		if (this.#state.phase !== "READY" && this.#state.phase !== "EXECUTING" && this.#state.phase !== "VERIFYING") {
+		if (
+			this.#state.phase !== "READY" &&
+			this.#state.phase !== "EXECUTING" &&
+			this.#state.phase !== "VERIFYING" &&
+			!approvedPreconditionRecovery
+		) {
 			throw new Error(`Task mutations are disabled during ${this.#state.phase}.`);
 		}
 		if (this.#state.phase === "VERIFYING" && input.tier === "write") {
 			throw new Error(
 				"Implementation writes are disabled during VERIFYING; return to execution or replanning first.",
+			);
+		}
+		const unassessedDelegationSteps = summarizeDelegation(this.#state.plan).unassessedDelegationStepIds;
+		if (
+			this.#executionSettings().workUnits.enabled &&
+			activePlanSteps(this.#state.plan).length === 0 &&
+			unassessedDelegationSteps.length > 0
+		) {
+			throw new Error(
+				`Work Unit 위임 판단이 누락된 pending 단계가 있습니다: ${unassessedDelegationSteps.join(", ")}. 최소 Plan patch로 delegation_assessment를 기록한 뒤 실행하세요.`,
 			);
 		}
 		const activeStep = activePlanStep(this.#state.plan);
@@ -2988,7 +5113,12 @@ export class TaskLifecycleRuntime {
 			throw new Error(`Target ${target} is outside the allowed targets for ZZWorkflow step ${activeStep.id}.`);
 		}
 		const validator = matchingValidator(input.toolName, input.args, activeStep);
-		if (isValidationStep(activeStep) && !validator) {
+		if (approvedPreconditionRecovery && validator) {
+			throw new Error(
+				"Record successful precondition evidence with zzw_report_step_result before rerunning the exact validator.",
+			);
+		}
+		if (isValidationStep(activeStep) && !validator && !approvedPreconditionRecovery) {
 			throw new Error(
 				`Validation step ${activeStep.id} only permits an exact declared validator command: ${(activeStep.validators ?? []).join(", ")}.`,
 			);
@@ -3027,7 +5157,9 @@ export class TaskLifecycleRuntime {
 		this.#state.workspaceId = workspace.workspaceId;
 		await this.#host.assertMutationLease?.(cloneState(this.#state));
 		activeStep.status = "in_progress";
-		this.#setPhase(isValidationStep(activeStep) ? "VERIFYING" : "EXECUTING");
+		if (!approvedPreconditionRecovery) {
+			this.#setPhase(isValidationStep(activeStep) ? "VERIFYING" : "EXECUTING");
+		}
 		const preStateHash = workspaceStateHash(workspace);
 		const operation: TaskOperation = {
 			id: this.#mint("operation"),
@@ -3123,7 +5255,7 @@ export class TaskLifecycleRuntime {
 					classification: verification ? "verification-failure" : undefined,
 					failureFingerprint: operation.fingerprint,
 					repeatedFailures,
-					requiredAction: repeatedFailures >= 2 || verification ? "patch-plan" : "classify-result",
+					requiredAction: repeatedFailures >= 2 ? "patch-plan" : "classify-result",
 					createdAt: this.#now(),
 				};
 				this.#state.phase = "RECONCILING";
@@ -3151,7 +5283,7 @@ export class TaskLifecycleRuntime {
 	): Promise<TaskOperation> {
 		const operation = this.#operations.get(operationId);
 		if (!operation) throw new Error(`unknown task operation ${operationId}`);
-		if (operation.status !== "prepared") {
+		if (operation.status !== "prepared" && operation.status !== "running" && operation.status !== "unknown") {
 			throw new Error(`task operation ${operationId} is already ${operation.status}`);
 		}
 		const workspace = await this.#captureWorkspace();
@@ -3180,15 +5312,46 @@ export class TaskLifecycleRuntime {
 			this.#state.evidence.push(evidence);
 			this.#state.workspace = workspace;
 			this.#state.workspaceId = workspace.workspaceId;
+			const lane = this.#state.execution.lanes.find(
+				candidate => candidate.id === operation.laneId || candidate.operationIds.includes(operation.id),
+			);
+			if (lane) {
+				lane.evidenceIds.push(evidence.id);
+				const laneOperations = lane.operationIds.flatMap(id => {
+					const candidate = this.#operations.get(id);
+					return candidate ? [candidate] : [];
+				});
+				if (
+					laneOperations.every(candidate =>
+						["committed", "failed", "cancelled", "interrupted", "compensated"].includes(candidate.status),
+					)
+				) {
+					if (operation.toolName === "zzw-integrate") {
+						lane.status = resolution === "committed" ? "integrated" : "rejected";
+					} else if (resolution === "committed") {
+						lane.status = lane.executor === "subagent-isolated" ? "interrupted" : "succeeded";
+						if (lane.executor === "subagent-isolated") {
+							lane.error = "Recovered isolated execution has no trustworthy automatic integration continuation.";
+						}
+					} else {
+						lane.status = "failed";
+					}
+					lane.settledAt = this.#now();
+				}
+				const wave = this.#state.execution.waves.find(candidate => candidate.id === lane.waveId);
+				if (wave) this.#updateExecutionWave(wave, this.#now());
+			}
 			this.#refreshPendingOperations();
 			if (this.#state.pendingOperationIds.length === 0 && operation.planStepId) {
 				const step = this.#state.plan.steps.find(candidate => candidate.id === operation.planStepId);
-				if (step) step.status = resolution === "committed" ? "in_progress" : "blocked";
+				const laneNeedsRecovery =
+					lane !== undefined && ["failed", "interrupted", "unknown", "rejected"].includes(lane.status);
+				if (step) step.status = resolution === "committed" && !laneNeedsRecovery ? "in_progress" : "blocked";
 				this.#state.reconciliation = {
 					stepId: operation.planStepId,
 					operationId: operation.id,
 					evidenceIds: [evidence.id],
-					classification: resolution === "committed" ? undefined : "execution-failure",
+					classification: resolution === "committed" && !laneNeedsRecovery ? undefined : "execution-failure",
 					failureFingerprint: operation.fingerprint,
 					repeatedFailures: resolution === "failed" ? 1 : 0,
 					requiredAction: "classify-result",
@@ -3209,6 +5372,9 @@ export class TaskLifecycleRuntime {
 
 	buildContext(): string | undefined {
 		if (!this.#state) return undefined;
+		const executionSettings = this.#executionSettings();
+		const executionMode = executionSettings.mode;
+		const delegation = summarizeDelegation(this.#state.plan);
 		const currentVerification = missingValidators(this.#state).length === 0;
 		const stateDigest = lifecycleHash(
 			JSON.stringify({
@@ -3218,6 +5384,9 @@ export class TaskLifecycleRuntime {
 				phase: this.#state.phase,
 				workspace: workspaceStateHash(this.#state.workspace),
 				pendingOperationIds: this.#state.pendingOperationIds,
+				execution: this.#state.execution,
+				executionSettings,
+				delegation,
 				reconciliation: this.#state.reconciliation,
 				readiness: this.#state.readiness.ready,
 				verification: currentVerification,
@@ -3232,6 +5401,9 @@ export class TaskLifecycleRuntime {
 			};
 		});
 		const activeStep = activePlanStep(this.#state.plan);
+		const activeWave = this.#state.execution.activeWaveId
+			? this.#state.execution.waves.find(wave => wave.id === this.#state?.execution.activeWaveId)
+			: undefined;
 		const milestone = readyMilestone(this.#state.plan);
 		return prompt.render(taskLifecycleContextPrompt, {
 			contextVersion: String(this.#state.updatedAt),
@@ -3246,8 +5418,20 @@ export class TaskLifecycleRuntime {
 			planApproval: this.#state.plan.approval ?? "draft",
 			checkpointId: escapeXmlText(this.#state.checkpointId),
 			phase: this.#state.phase,
-			requiredNextAction: nextRequiredAction(this.#state),
-			writesAllowed: String(writesAllowed(this.#state)),
+			requiredNextAction: nextRequiredAction(this.#state, executionMode, executionSettings.workUnits.enabled),
+			executionMode,
+			validationConcurrency: String(executionSettings.validationConcurrency),
+			subagentConcurrency: String(executionSettings.subagentConcurrency),
+			workUnitsEnabled: String(executionSettings.workUnits.enabled),
+			workUnitModel: escapeXmlText(executionSettings.workUnits.model),
+			delegationAssessmentRequired: String(executionSettings.workUnits.enabled),
+			adversarialReviewEnabled: String(executionSettings.adversarialReview.enabled),
+			adversarialReviewerModel: escapeXmlText(executionSettings.adversarialReview.model),
+			delegatedStepCount: String(delegation.delegatedStepIds.length),
+			retainedPrimaryStepCount: String(delegation.retainedPrimaryStepIds.length),
+			unassessedDelegationStepCount: String(delegation.unassessedDelegationStepIds.length),
+			declaredWorkUnitCount: String(delegation.declaredWorkUnitCount),
+			writesAllowed: String(writesAllowed(this.#state, executionSettings.workUnits.enabled)),
 			verificationFresh: String(currentVerification),
 			workspaceBranch: escapeXmlText(this.#state.workspace.branch ?? "detached"),
 			workspaceHead: escapeXmlText(this.#state.workspace.headCommit ?? "unavailable"),
@@ -3265,6 +5449,29 @@ export class TaskLifecycleRuntime {
 						content: escapeXmlText(activeStep.content),
 					}
 				: undefined,
+			hasActiveWave: activeWave !== undefined,
+			activeWave: activeWave
+				? {
+						id: escapeXmlText(activeWave.id),
+						status: activeWave.status,
+						lanes: activeWave.laneIds.flatMap(id => {
+							const lane = this.#state?.execution.lanes.find(candidate => candidate.id === id);
+							return lane
+								? [
+										{
+											id: escapeXmlText(lane.id),
+											stepId: escapeXmlText(lane.stepId),
+											executor: lane.executor,
+											status: lane.status,
+											planImpactLevel:
+												lane.planImpact?.level === "none" ? undefined : lane.planImpact?.level,
+											planImpactKind: lane.planImpact?.level === "none" ? undefined : lane.planImpact?.kind,
+										},
+									]
+								: [];
+						}),
+					}
+				: undefined,
 			readyMilestone: milestone
 				? { id: escapeXmlText(milestone.id), content: escapeXmlText(milestone.content) }
 				: undefined,
@@ -3273,6 +5480,12 @@ export class TaskLifecycleRuntime {
 						...this.#state.reconciliation,
 						stepId: escapeXmlText(this.#state.reconciliation.stepId),
 						classification: this.#state.reconciliation.classification ?? "unclassified",
+						planImpact: this.#state.reconciliation.planImpact
+							? {
+									...this.#state.reconciliation.planImpact,
+									reason: escapeXmlText(this.#state.reconciliation.planImpact.reason),
+								}
+							: undefined,
 					}
 				: undefined,
 			hasPendingOperations: pendingOperations.length > 0,

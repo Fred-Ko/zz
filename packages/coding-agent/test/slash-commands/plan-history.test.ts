@@ -29,6 +29,7 @@ describe("Goal and ZZWorkflow command boundaries", () => {
 			"why",
 			"evidence",
 			"operations",
+			"lanes",
 			"approve-plan",
 		]);
 	});

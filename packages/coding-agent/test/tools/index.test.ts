@@ -303,11 +303,12 @@ describe("createTools", () => {
 				"zzw_report_observation",
 				"zzw_report_step_result",
 				"zzw_submit_verification",
+				"zzw_execute_wave",
 			]),
 		);
 	});
 
-	it("returns all ZZW Plan mapping failures as one structured tool result", async () => {
+	it("returns all ZZW Plan mapping failures before exposing an exclusive approval result", async () => {
 		const entries: TaskLifecycleJournalEntry[] = [];
 		const runtime = new TaskLifecycleRuntime({
 			getSessionId: () => "session-1",
@@ -399,6 +400,61 @@ describe("createTools", () => {
 			],
 		});
 		expect(runtime.state?.planVersion).toBe(1);
+
+		const accepted = await tool.execute("proposal-2", {
+			based_on_spec_version: 1,
+			steps: [
+				{
+					id: "work",
+					phase: "Implementation",
+					content: "Implement",
+					kind: "work",
+					depends_on: [],
+					expected_effects: [],
+					allowed_tools: ["write"],
+					allowed_targets: [],
+					postconditions: [],
+					success_condition_ids: [],
+					verification_ids: [],
+					validators: [],
+					rerun_policy: "safe",
+					risk_class: "low",
+				},
+				{
+					id: "verify",
+					phase: "Validation",
+					content: "Verify",
+					kind: "validation",
+					depends_on: ["work"],
+					expected_effects: [],
+					allowed_tools: ["bash"],
+					allowed_targets: [],
+					postconditions: [],
+					success_condition_ids: ["SC-1"],
+					verification_ids: ["V-1"],
+					validators: ["yarn verify"],
+					rerun_policy: "safe",
+					risk_class: "low",
+				},
+			],
+		});
+
+		expect(tool.concurrency).toBe("exclusive");
+		expect(accepted.content).toEqual([
+			{
+				type: "text",
+				text: [
+					"Plan DAG v2 제안 완료 · 사용자 승인 대기",
+					"",
+					"1. [work] Implement",
+					"2. [verify] Verify",
+					"",
+					"승인 후 실행:",
+					"/zzw approve-plan",
+				].join("\n"),
+			},
+		]);
+		expect(runtime.state).toMatchObject({ phase: "AWAITING_USER", planVersion: 2 });
 	});
 
 	it("does not widen a restricted explicit tool list for an active goal", async () => {

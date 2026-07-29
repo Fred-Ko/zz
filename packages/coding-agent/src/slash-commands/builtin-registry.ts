@@ -31,7 +31,12 @@ import {
 	getPluginsCacheDir,
 	MarketplaceManager,
 } from "../extensibility/plugins/marketplace";
-import { summarizeTaskLifecycle, type TaskLifecycleState, type TaskPlanStep } from "../goals/task-lifecycle";
+import {
+	summarizeTaskLifecycle,
+	type TaskLifecycleState,
+	type TaskPlanStep,
+	TaskPlanValidationError,
+} from "../goals/task-lifecycle";
 import { runPauseScreen } from "../modes/components/pause-screen";
 import { describeLoopLimitRuntime } from "../modes/loop-limit";
 import { theme } from "../modes/theme/theme";
@@ -45,6 +50,7 @@ import { formatShakeSummary, type ShakeMode } from "../session/shake-types";
 import type { ComputerTool } from "../tools/computer";
 import { computerExposureMode } from "../tools/computer/exposure";
 import { expandTilde, resolveToCwd } from "../tools/path-utils";
+import { previewLine, TRUNCATE_LENGTHS } from "../tools/render-utils";
 import { urlHyperlinkAlways } from "../tui";
 import {
 	getChangelogPath,
@@ -188,8 +194,14 @@ function renderZZWorkflowPlan(state: TaskLifecycleState): string {
 			(step.supersedes?.length ?? 0) > 0 ? `supersedes: ${step.supersedes?.join(", ")}` : undefined,
 			(step.supersededBy?.length ?? 0) > 0 ? `replaced-by: ${step.supersededBy?.join(", ")}` : undefined,
 		].filter((value): value is string => value !== undefined);
+		const lanes = state.execution.lanes.filter(lane => lane.stepId === step.id);
+		const execution = step.execution
+			? `executor: ${step.execution.executor} · delegation: ${step.execution.delegationAssessment ? `${step.execution.delegationAssessment.decision}/${step.execution.delegationAssessment.reasonCode}` : "unassessed"} · resources: ${step.execution.resourceClaims.length}${step.execution.capability ? ` · capability: ${step.execution.capability}` : ""}${step.execution.workUnits?.length ? ` · work-units: ${step.execution.workUnits.length}` : ""}`
+			: step.kind === "validation"
+				? "executor: validator(default)"
+				: "executor: primary(default)";
 		lines.push(
-			`${indent}- [${step.status}] ${step.id} · ${step.kind ?? "work"} · ${step.phase} · ${step.content}${relations.length > 0 ? ` · ${relations.join(" · ")}` : ""}`,
+			`${indent}- [${step.status}] ${step.id} · ${step.kind ?? "work"} · ${step.phase} · ${step.content} · ${execution}${lanes.length > 0 ? ` · lanes: ${lanes.map(lane => `${lane.id}(${lane.status})`).join(", ")}` : ""}${relations.length > 0 ? ` · ${relations.join(" · ")}` : ""}`,
 		);
 	}
 	return lines.join("\n");
@@ -255,12 +267,16 @@ function renderZZWorkflowWhy(state: TaskLifecycleState, stepId: string): string 
 	const observations = (state.observations ?? []).filter(item =>
 		item.affects.some(affected => affected.type === "step" && affected.id === stepId),
 	);
+	const lanes = state.execution.lanes.filter(lane => lane.stepId === stepId);
 	return [
 		`ZZWorkflow 단계 설명 · ${step.id}`,
 		`- 상태: ${step.status} · 종류: ${step.kind ?? "work"}`,
 		`- 내용: ${step.content}`,
 		`- 계보: 최초 v${step.originPlanVersion ?? "?"} · 최근 변경 v${step.lastChangedPlanVersion ?? "?"}`,
 		`- 의존성: ${step.dependsOn.join(", ") || "없음"}`,
+		`- 실행: ${step.execution?.executor ?? (step.kind === "validation" ? "validator(default)" : "primary(default)")}`,
+		`- 자원: ${step.execution?.resourceClaims.map(claim => `${claim.kind}:${claim.key}:${claim.access}`).join(", ") || "workspace-path:.:기본"}`,
+		`- Lane: ${lanes.length > 0 ? lanes.map(lane => `${lane.id}(${lane.status})`).join(", ") : "없음"}`,
 		`- 가정: ${step.assumptionIds?.join(", ") || "없음"}`,
 		`- 증거: ${evidence.length > 0 ? evidence.map(item => `${item.id}${item.stale ? `(${item.staleReason ?? "stale"})` : ""}`).join(", ") : "없음"}`,
 		`- 관찰: ${observations.length > 0 ? observations.map(item => `${item.id}(${item.kind})`).join(", ") : "없음"}`,
@@ -605,6 +621,7 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			{ name: "why", description: "Explain one Plan step, its evidence, and change reasons", usage: "<step-id>" },
 			{ name: "evidence", description: "Show verification and operation evidence" },
 			{ name: "operations", description: "Show the operation journal" },
+			{ name: "lanes", description: "Show recent Execution Wave lanes and resource claims" },
 			{ name: "approve-plan", description: "Approve the current draft Plan DAG" },
 		],
 		allowArgs: true,
@@ -620,10 +637,24 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 			}
 			const { verb: action, rest } = parseSubcommand(command.args.trim() || "status");
 			if (action === "approve-plan") {
-				const plan = await lifecycle.approvePlan();
-				await runtime.output(`Plan DAG v${plan.version}을 승인했습니다. 첫 dependency-ready 단계를 실행합니다.`);
-				await runtime.requestGoalContinuation?.();
-				return commandConsumed();
+				try {
+					const plan = await lifecycle.approvePlan();
+					await runtime.output(`Plan DAG v${plan.version}을 승인했습니다. 첫 dependency-ready 단계를 실행합니다.`);
+					await runtime.requestGoalContinuation?.();
+					return commandConsumed();
+				} catch (error) {
+					if (error instanceof TaskPlanValidationError) {
+						return usage(
+							[
+								"Plan 승인 검증에 실패했습니다.",
+								...error.issues.map(issue => `- ${issue.code}: ${issue.message}`),
+								"현재 Plan의 누락된 계약을 보완한 뒤 다시 승인하세요.",
+							].join("\n"),
+							runtime,
+						);
+					}
+					return usage(`Plan 승인 실패: ${errorMessage(error)}`, runtime);
+				}
 			}
 			if (action === "plan") {
 				await runtime.output(renderZZWorkflowPlan(state));
@@ -658,19 +689,68 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 				await runtime.output(
 					[
 						`Operation Journal · ${operations.length}개`,
-						...operations.map(
-							operation =>
-								`- ${operation.id} · ${operation.status} · ${operation.toolName} · step ${operation.planStepId ?? "없음"}`,
-						),
+						...operations.map(operation => {
+							const lane = state.execution.lanes.find(
+								candidate => candidate.id === operation.laneId || candidate.operationIds.includes(operation.id),
+							);
+							return `- ${operation.id} · ${operation.status} · ${operation.toolName} · step ${operation.planStepId ?? "없음"}${operation.waveId || operation.laneId ? ` · wave ${operation.waveId ?? lane?.waveId ?? "?"} / lane ${operation.laneId ?? lane?.id ?? "?"}` : lane ? ` · wave ${lane.waveId} / lane ${lane.id}` : ""}`;
+						}),
+					].join("\n"),
+				);
+				return commandConsumed();
+			}
+			if (action === "lanes") {
+				const lanes = state.execution.lanes.slice(-50);
+				await runtime.output(
+					[
+						`Execution Lanes · ${state.execution.lanes.length}개${state.execution.activeWaveId ? ` · active ${state.execution.activeWaveId}` : ""}`,
+						...lanes.map(lane => {
+							const claims = lane.resourceClaims
+								.map(claim => `${claim.kind}:${claim.key}:${claim.access}`)
+								.join(", ");
+							const validators = lane.validators?.length ? ` · validator ${lane.validators.join(", ")}` : "";
+							const lineage = `${lane.workUnitId ? ` · work-unit ${lane.workUnitId}` : ""}${lane.role ? ` · role ${lane.role}` : ""}${lane.parentLaneId ? ` · parent ${lane.parentLaneId}` : ""}`;
+							const model = lane.modelSelector ? ` · model ${lane.modelSelector}` : "";
+							const review = lane.reviewVerdict
+								? ` · review ${lane.reviewVerdict}${lane.reviewFindings?.length ? ` (${lane.reviewFindings.length} findings)` : ""}`
+								: lane.reviewRequired
+									? " · review required"
+									: "";
+							const planImpact =
+								lane.planImpact && lane.planImpact.level !== "none"
+									? ` · plan-impact ${lane.planImpact.level}/${lane.planImpact.kind}`
+									: "";
+							const error = lane.error ? ` · ${previewLine(lane.error, TRUNCATE_LENGTHS.LONG)}` : "";
+							return `- ${lane.id} · wave ${lane.waveId} · step ${lane.stepId}${lineage} · ${lane.executor} · ${lane.status}${model}${review}${planImpact} · resource [${claims}] · operation ${lane.operationIds.length} · evidence ${lane.evidenceIds.length}${validators}${error}`;
+						}),
 					].join("\n"),
 				);
 				return commandConsumed();
 			}
 			if (action !== "status") {
-				return usage("사용법: /zzw <status|plan|history|diff|why|evidence|operations|approve-plan>", runtime);
+				return usage("사용법: /zzw <status|plan|history|diff|why|evidence|operations|lanes|approve-plan>", runtime);
 			}
-			const activeStepId = summarizeTaskLifecycle(state)?.activePlanStepId;
+			const summary = summarizeTaskLifecycle(
+				state,
+				runtime.session.settings.get("zzworkflow.execution.mode"),
+				runtime.session.settings.get("zzworkflow.execution.workUnits.enabled"),
+			);
+			const activeStepId = summary?.activePlanStepId;
 			const active = activeStepId ? state.plan.steps.find(step => step.id === activeStepId) : undefined;
+			const activeWave = state.execution.activeWaveId
+				? state.execution.waves.find(wave => wave.id === state.execution.activeWaveId)
+				: undefined;
+			const activeLanes = activeWave
+				? state.execution.lanes.filter(lane => activeWave.laneIds.includes(lane.id))
+				: [];
+			const executionMode = runtime.session.settings.get("zzworkflow.execution.mode");
+			const workUnitsEnabled = runtime.session.settings.get("zzworkflow.execution.workUnits.enabled");
+			const workUnitModel = runtime.session.settings.get("zzworkflow.execution.workUnits.model") || "*";
+			const adversarialReviewEnabled = runtime.session.settings.get(
+				"zzworkflow.execution.adversarialReview.enabled",
+			);
+			const adversarialReviewerModel =
+				runtime.session.settings.get("zzworkflow.execution.adversarialReview.model") || "*";
 			await runtime.output(
 				[
 					"ZZWorkflow 상태",
@@ -679,8 +759,14 @@ const BUILTIN_SLASH_COMMAND_REGISTRY: ReadonlyArray<SlashCommandSpec> = [
 					`- Specification: v${state.specVersion}`,
 					`- Plan: v${state.planVersion} · ${state.plan.approval ?? "draft"} · ${state.plan.status}`,
 					`- Goal: ${goalState.enabled ? "active" : goalState.goal.status}`,
-					`- 활성 단계: ${active ? `${active.id} · ${active.content}` : "없음"}`,
-					`- 다음 동작: ${summarizeTaskLifecycle(state)?.requiredNextAction ?? "없음"}`,
+					`- 활성 단계: ${summary?.activePlanStepIds.length ? summary.activePlanStepIds.join(", ") : active ? `${active.id} · ${active.content}` : "없음"}`,
+					`- Ready 단계: ${summary?.readyPlanStepIds.length ? summary.readyPlanStepIds.join(", ") : "없음"}`,
+					`- 실행 모드: ${executionMode} · validator ${runtime.session.settings.get("zzworkflow.execution.validationConcurrency")}개 · subagent ${runtime.session.settings.get("zzworkflow.execution.subagentConcurrency")}개`,
+					`- Work Unit: ${workUnitsEnabled ? `활성 · ${workUnitModel}` : "비활성"}`,
+					`- 적대 리뷰: ${adversarialReviewEnabled ? `활성 · ${adversarialReviewerModel}` : "비활성"}`,
+					`- 위임 판단: ${summary?.delegatedStepIds.length ?? 0}개 위임 · ${summary?.retainedPrimaryStepIds.length ?? 0}개 Primary 유지 · ${summary?.unassessedDelegationStepIds.length ?? 0}개 미평가 · Work Unit ${summary?.declaredWorkUnitCount ?? 0}개`,
+					`- Execution Wave: ${activeWave ? `${activeWave.id} · ${activeWave.status} · ${activeLanes.filter(lane => lane.status === "running").length} running / ${activeLanes.filter(lane => lane.status === "prepared").length} queued / ${activeLanes.filter(lane => lane.status === "failed" || lane.status === "rejected").length} failed` : "없음"}`,
+					`- 다음 동작: ${summary?.requiredNextAction ?? "없음"}`,
 					`- Reconciliation: ${state.reconciliation ? `${state.reconciliation.stepId} · ${state.reconciliation.classification ?? "분류 대기"} · ${state.reconciliation.requiredAction}` : "없음"}`,
 					`- Readiness: ${state.readiness.ready ? "ready" : state.readiness.blockers.map(blocker => blocker.code).join(", ")}`,
 					`- 미해결 operation: ${state.pendingOperationIds.length}개`,
